@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -13,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -21,9 +21,6 @@ const maxProducts = 1000
 const concurrency = 1
 
 var shopifySites = []string{
-	"https://www.baarbaracoffee.com",
-	"https://bluetokaicoffee.com",
-	"https://www.tulum.coffee",
 	"https://moxiebeauty.in",
 }
 
@@ -48,20 +45,42 @@ type ImageEntry struct {
 	Loc string `xml:"http://www.google.com/schemas/sitemap-image/1.1 loc"`
 }
 
-// ---- Product ----
+// ---- Product structs ----
+
+type Variant struct {
+	Label    string `json:"label"`
+	Price    string `json:"price"`
+	Currency string `json:"currency"`
+	URL      string `json:"url"`
+}
+
+func (v Variant) DisplayPrice() string {
+	if v.Currency != "" {
+		return v.Currency + " " + v.Price
+	}
+	return v.Price
+}
 
 type Product struct {
-	Name     string
-	Price    string
-	Currency string
-	Image    string
-	URL      string
-	Shop     string
+	Name     string    `json:"name"`
+	Image    string    `json:"image"`
+	Shop     string    `json:"shop"`
+	Variants []Variant `json:"variants"`
+}
+
+func (p Product) First() Variant {
+	if len(p.Variants) == 0 {
+		return Variant{}
+	}
+	return p.Variants[0]
+}
+
+func (p Product) Multi() bool {
+	return len(p.Variants) > 1
 }
 
 // ---- Rate-aware HTTP ----
 
-// userAgents — realistic Chrome/Safari profiles; rotate to avoid fingerprinting on UA alone.
 var userAgents = []string{
 	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
@@ -69,11 +88,10 @@ var userAgents = []string{
 	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
 }
 
-// domainState tracks rate-limit quota per origin so all workers share awareness.
 type domainState struct {
 	mu        sync.Mutex
-	remaining int       // RateLimit-Remaining / X-RateLimit-Remaining (-1 = unknown)
-	resetAt   time.Time // when remaining refills
+	remaining int
+	resetAt   time.Time
 }
 
 var (
@@ -83,28 +101,22 @@ var (
 
 func getDomainState(rawURL string) *domainState {
 	u, _ := url.Parse(rawURL)
-	host := u.Host
 	domainsMu.Lock()
 	defer domainsMu.Unlock()
-	if ds, ok := domains[host]; ok {
+	if ds, ok := domains[u.Host]; ok {
 		return ds
 	}
 	ds := &domainState{remaining: -1}
-	domains[host] = ds
+	domains[u.Host] = ds
 	return ds
 }
 
-var httpClient = &http.Client{
-	Timeout: 30 * time.Second,
-	// let Go's transport auto-handle gzip; don't set Accept-Encoding manually
-}
+var httpClient = &http.Client{Timeout: 30 * time.Second}
 
-// jitter returns a random duration in [minMs, maxMs) milliseconds.
 func jitter(minMs, maxMs int) time.Duration {
 	return time.Duration(minMs+rand.Intn(maxMs-minMs)) * time.Millisecond
 }
 
-// parseRetryAfter reads the Retry-After header: either seconds or HTTP date.
 func parseRetryAfter(h http.Header) time.Duration {
 	v := h.Get("Retry-After")
 	if v == "" {
@@ -114,15 +126,13 @@ func parseRetryAfter(h http.Header) time.Duration {
 		return time.Duration(secs)*time.Second + jitter(500, 1500)
 	}
 	if t, err := http.ParseTime(v); err == nil {
-		d := time.Until(t)
-		if d > 0 {
+		if d := time.Until(t); d > 0 {
 			return d + jitter(500, 1500)
 		}
 	}
 	return 5 * time.Second
 }
 
-// updateDomainState reads RateLimit-* / X-RateLimit-* headers and stores them.
 func updateDomainState(ds *domainState, h http.Header) {
 	remaining := -1
 	for _, key := range []string{"RateLimit-Remaining", "X-RateLimit-Remaining"} {
@@ -133,11 +143,9 @@ func updateDomainState(ds *domainState, h http.Header) {
 			}
 		}
 	}
-
 	var resetAt time.Time
 	for _, key := range []string{"RateLimit-Reset", "X-RateLimit-Reset"} {
 		if v := h.Get(key); v != "" {
-			// can be epoch seconds or HTTP date
 			if secs, err := strconv.ParseInt(v, 10, 64); err == nil {
 				resetAt = time.Unix(secs, 0)
 			} else if t, err := http.ParseTime(v); err == nil {
@@ -146,7 +154,6 @@ func updateDomainState(ds *domainState, h http.Header) {
 			break
 		}
 	}
-
 	ds.mu.Lock()
 	ds.remaining = remaining
 	if !resetAt.IsZero() {
@@ -155,52 +162,53 @@ func updateDomainState(ds *domainState, h http.Header) {
 	ds.mu.Unlock()
 }
 
+// fetchSitemap uses a short delay — sitemaps are XML, rarely rate-limited.
+func fetchSitemap(targetURL string) ([]byte, error) {
+	return fetchWithDelay(targetURL, 300, 700)
+}
+
+// fetch uses a longer delay for product HTML pages.
 func fetch(targetURL string) ([]byte, error) {
+	return fetchWithDelay(targetURL, 900, 2200)
+}
+
+func fetchWithDelay(targetURL string, minMs, maxMs int) ([]byte, error) {
 	ds := getDomainState(targetURL)
 	const maxRetries = 6
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		// --- pre-request pacing ---
 		ds.mu.Lock()
-		rem := ds.remaining
-		resetAt := ds.resetAt
+		rem, resetAt := ds.remaining, ds.resetAt
 		ds.mu.Unlock()
 
 		switch {
 		case rem == 0 && !resetAt.IsZero() && time.Now().Before(resetAt):
-			// quota exhausted — wait until the window resets
 			wait := time.Until(resetAt) + jitter(500, 1500)
-			fmt.Printf("  quota exhausted, sleeping %v until reset\n", wait.Round(time.Second))
+			fmt.Printf("  quota exhausted, sleeping %v\n", wait.Round(time.Second))
 			time.Sleep(wait)
 		case rem > 0 && rem < 8:
-			// running low — add extra breathing room
-			extra := jitter(2000, 4000)
-			fmt.Printf("  %d requests remaining, slowing down (%v extra)\n", rem, extra.Round(time.Millisecond))
+			extra := jitter(2000, 3500)
+			fmt.Printf("  %d remaining, slowing down (%v)\n", rem, extra.Round(time.Millisecond))
 			time.Sleep(extra)
 		default:
-			// normal inter-request jitter: 1.5 – 4 s
-			time.Sleep(jitter(1500, 4000))
+			time.Sleep(jitter(minMs, maxMs))
 		}
 
 		data, status, headers, err := doFetch(targetURL)
 		if err != nil {
 			return nil, err
 		}
-
 		updateDomainState(ds, headers)
 
 		if status == 429 {
 			wait := parseRetryAfter(headers)
 			if wait == 0 {
-				// no header — exponential backoff: 4, 8, 16, 32, 64 s
 				wait = time.Duration(4<<uint(attempt))*time.Second + jitter(0, 3000)
 			}
-			fmt.Printf("  429 on %s — backing off %v (attempt %d/%d)\n",
-				targetURL, wait.Round(time.Second), attempt+1, maxRetries)
+			fmt.Printf("  429 — backing off %v (attempt %d/%d)\n", wait.Round(time.Second), attempt+1, maxRetries)
 			time.Sleep(wait)
 			continue
 		}
-
 		if status != 200 {
 			return nil, fmt.Errorf("HTTP %d for %s", status, targetURL)
 		}
@@ -211,9 +219,8 @@ func fetch(targetURL string) ([]byte, error) {
 
 func doFetch(targetURL string) ([]byte, int, http.Header, error) {
 	req, _ := http.NewRequest("GET", targetURL, nil)
-	ua := userAgents[rand.Intn(len(userAgents))]
 	req.Header = http.Header{
-		"User-Agent":                []string{ua},
+		"User-Agent":                []string{userAgents[rand.Intn(len(userAgents))]},
 		"Accept":                    []string{"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"},
 		"Accept-Language":           []string{"en-US,en;q=0.9"},
 		"Connection":                []string{"keep-alive"},
@@ -223,13 +230,11 @@ func doFetch(targetURL string) ([]byte, int, http.Header, error) {
 		"Sec-Fetch-Site":            []string{"none"},
 		"Sec-Fetch-User":            []string{"?1"},
 	}
-
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, 0, nil, err
 	}
 	defer resp.Body.Close()
-
 	if resp.StatusCode != 200 {
 		return nil, resp.StatusCode, resp.Header, nil
 	}
@@ -240,7 +245,7 @@ func doFetch(targetURL string) ([]byte, int, http.Header, error) {
 // ---- Sitemap parsing ----
 
 func getProductSitemaps(baseURL string) ([]string, error) {
-	data, err := fetch(baseURL + "/sitemap.xml")
+	data, err := fetchSitemap(baseURL + "/sitemap.xml")
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +263,7 @@ func getProductSitemaps(baseURL string) ([]string, error) {
 }
 
 func getProductURLs(sitemapURL string) ([]URLEntry, error) {
-	data, err := fetch(sitemapURL)
+	data, err := fetchSitemap(sitemapURL)
 	if err != nil {
 		return nil, err
 	}
@@ -269,42 +274,97 @@ func getProductURLs(sitemapURL string) ([]URLEntry, error) {
 	return urlset.URLs, nil
 }
 
-// ---- Product page scraping ----
+// ---- Scraping ----
 
-func extractLDJSON(html string) string {
+// extractLDJSON scans all application/ld+json script blocks and returns the
+// raw JSON of the first Product or ProductGroup it finds. Handles direct
+// objects, @graph arrays, and top-level JSON arrays.
+func extractLDJSON(pageHTML string) string {
+	rest := pageHTML
 	for {
-		start := strings.Index(html, `application/ld+json`)
-		if start == -1 {
+		idx := strings.Index(rest, `application/ld+json`)
+		if idx == -1 {
 			return ""
 		}
-		open := strings.Index(html[start:], "{")
-		if open == -1 {
+		// advance past the closing > of the <script> tag
+		tagClose := strings.Index(rest[idx:], ">")
+		if tagClose == -1 {
 			return ""
 		}
-		open += start
+		bodyStart := idx + tagClose + 1
+		bodyEnd := strings.Index(rest[bodyStart:], "</script>")
+		if bodyEnd == -1 {
+			return ""
+		}
+		body := strings.TrimSpace(rest[bodyStart : bodyStart+bodyEnd])
+		rest = rest[bodyStart+bodyEnd:]
 
-		depth, end := 0, open
-		for i := open; i < len(html); i++ {
-			switch html[i] {
-			case '{':
-				depth++
-			case '}':
-				depth--
-				if depth == 0 {
-					end = i + 1
-					goto found
-				}
+		if found := findProductInJSON(body); found != "" {
+			return found
+		}
+	}
+}
+
+// findProductInJSON recursively searches a JSON value for a Product/ProductGroup object.
+func findProductInJSON(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if len(raw) == 0 {
+		return ""
+	}
+
+	switch raw[0] {
+	case '[':
+		// JSON array — check each element
+		var items []json.RawMessage
+		if json.Unmarshal([]byte(raw), &items) != nil {
+			return ""
+		}
+		for _, item := range items {
+			if found := findProductInJSON(string(item)); found != "" {
+				return found
 			}
 		}
-		html = html[start+1:]
-		continue
-	found:
-		candidate := html[open:end]
-		if strings.Contains(candidate, `"Product"`) {
-			return candidate
+
+	case '{':
+		var obj map[string]json.RawMessage
+		if json.Unmarshal([]byte(raw), &obj) != nil {
+			return ""
 		}
-		html = html[end:]
+
+		// Resolve @type — can be a string or an array of strings
+		atType := resolveAtType(obj["@type"])
+		if atType == "Product" || atType == "ProductGroup" {
+			return raw
+		}
+
+		// Descend into @graph if present
+		if graphRaw, ok := obj["@graph"]; ok {
+			if found := findProductInJSON(string(graphRaw)); found != "" {
+				return found
+			}
+		}
 	}
+	return ""
+}
+
+// resolveAtType extracts the first meaningful type string from a raw @type value.
+func resolveAtType(raw json.RawMessage) string {
+	if raw == nil {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var arr []string
+	if json.Unmarshal(raw, &arr) == nil {
+		for _, t := range arr {
+			if t != "" {
+				return t
+			}
+		}
+	}
+	return ""
 }
 
 func scrapeProduct(entry URLEntry, shopName string) (*Product, error) {
@@ -315,13 +375,15 @@ func scrapeProduct(entry URLEntry, shopName string) (*Product, error) {
 
 	jsonStr := extractLDJSON(string(data))
 	if jsonStr == "" {
-		return nil, fmt.Errorf("no ld+json Product block")
+		return nil, fmt.Errorf("no ld+json block")
 	}
 
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(jsonStr), &raw); err != nil {
 		return nil, err
 	}
+
+	atType := resolveAtType(raw["@type"])
 
 	var name string
 	if v, ok := raw["name"]; ok {
@@ -331,8 +393,7 @@ func scrapeProduct(entry URLEntry, shopName string) (*Product, error) {
 		return nil, fmt.Errorf("no product name")
 	}
 
-	price, currency := extractOffer(raw["offers"])
-
+	// Image: sitemap first, then ld+json
 	image := ""
 	if len(entry.Images) > 0 {
 		image = entry.Images[0].Loc
@@ -340,26 +401,99 @@ func scrapeProduct(entry URLEntry, shopName string) (*Product, error) {
 		image = extractImageURL(v)
 	}
 
-	return &Product{
-		Name:     name,
-		Price:    price,
-		Currency: currency,
-		Image:    image,
-		URL:      entry.Loc,
-		Shop:     shopName,
-	}, nil
+	var variants []Variant
+
+	if atType == "ProductGroup" {
+		variants = parseProductGroupVariants(name, entry.Loc, raw)
+		if image == "" {
+			// try first hasVariant's image
+			if hv, ok := raw["hasVariant"]; ok {
+				var hvs []map[string]json.RawMessage
+				if json.Unmarshal(hv, &hvs) == nil && len(hvs) > 0 {
+					if img, ok := hvs[0]["image"]; ok {
+						image = extractImageURL(img)
+					}
+				}
+			}
+		}
+	} else {
+		price, currency, offerURL := extractOfferInfo(raw["offers"])
+		if offerURL == "" {
+			offerURL = entry.Loc
+		} else {
+			offerURL = resolveURL(entry.Loc, offerURL)
+		}
+		variants = []Variant{{Price: price, Currency: currency, URL: offerURL}}
+	}
+
+	// Drop zero-price variants
+	valid := variants[:0]
+	for _, v := range variants {
+		if !isZeroPrice(v.Price) {
+			valid = append(valid, v)
+		}
+	}
+	if len(valid) == 0 {
+		return nil, fmt.Errorf("no priced variants (skipping)")
+	}
+
+	return &Product{Name: name, Image: image, Shop: shopName, Variants: valid}, nil
 }
 
-func extractOffer(raw json.RawMessage) (price, currency string) {
+func parseProductGroupVariants(productName, baseURL string, raw map[string]json.RawMessage) []Variant {
+	hvRaw, ok := raw["hasVariant"]
+	if !ok {
+		return nil
+	}
+	var hvs []map[string]json.RawMessage
+	if err := json.Unmarshal(hvRaw, &hvs); err != nil {
+		return nil
+	}
+
+	seen := map[string]bool{}
+	var out []Variant
+	for _, hv := range hvs {
+		var vName string
+		if n, ok := hv["name"]; ok {
+			json.Unmarshal(n, &vName)
+		}
+		price, currency, varURL := extractOfferInfo(hv["offers"])
+		if isZeroPrice(price) {
+			continue
+		}
+		if varURL != "" {
+			varURL = resolveURL(baseURL, varURL)
+		}
+		label := stripPrefix(productName, vName)
+		key := label + "|" + price
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, Variant{Label: label, Price: price, Currency: currency, URL: varURL})
+	}
+	return out
+}
+
+func extractOfferInfo(raw json.RawMessage) (price, currency, offerURL string) {
 	if raw == nil {
 		return
 	}
 	pick := func(m map[string]interface{}) {
 		if p, ok := m["price"]; ok {
-			price = strings.TrimSuffix(fmt.Sprintf("%v", p), ".0")
+			s := fmt.Sprintf("%v", p)
+			// normalise "685.00" → "685", "295.0" → "295"
+			if f, err := strconv.ParseFloat(s, 64); err == nil {
+				price = strconv.FormatFloat(f, 'f', -1, 64)
+			} else {
+				price = s
+			}
 		}
 		if c, ok := m["priceCurrency"]; ok {
 			currency = fmt.Sprintf("%v", c)
+		}
+		if u, ok := m["url"]; ok {
+			offerURL = fmt.Sprintf("%v", u)
 		}
 	}
 	var arr []map[string]interface{}
@@ -374,6 +508,14 @@ func extractOffer(raw json.RawMessage) (price, currency string) {
 	return
 }
 
+func isZeroPrice(price string) bool {
+	if price == "" {
+		return true
+	}
+	f, err := strconv.ParseFloat(price, 64)
+	return err == nil && f == 0
+}
+
 func extractImageURL(raw json.RawMessage) string {
 	if raw == nil {
 		return ""
@@ -382,6 +524,13 @@ func extractImageURL(raw json.RawMessage) string {
 	if json.Unmarshal(raw, &s) == nil {
 		return s
 	}
+	// array — take first
+	var arr []interface{}
+	if json.Unmarshal(raw, &arr) == nil && len(arr) > 0 {
+		if str, ok := arr[0].(string); ok {
+			return str
+		}
+	}
 	var obj map[string]interface{}
 	if json.Unmarshal(raw, &obj) == nil {
 		if u, ok := obj["url"]; ok {
@@ -389,6 +538,49 @@ func extractImageURL(raw json.RawMessage) string {
 		}
 	}
 	return ""
+}
+
+func stripPrefix(base, variant string) string {
+	if p := base + " - "; strings.HasPrefix(variant, p) {
+		return variant[len(p):]
+	}
+	return variant
+}
+
+func resolveURL(base, ref string) string {
+	if strings.HasPrefix(ref, "http") {
+		return ref
+	}
+	b, err := url.Parse(base)
+	if err != nil {
+		return ref
+	}
+	r, err := url.Parse(ref)
+	if err != nil {
+		return ref
+	}
+	return b.ResolveReference(r).String()
+}
+
+// ---- JSONL persistence ----
+
+func loadProducts(path string) ([]Product, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 4<<20), 4<<20) // 4 MB per line — handles large ProductGroups
+	var out []Product
+	for sc.Scan() {
+		var p Product
+		if json.Unmarshal(sc.Bytes(), &p) == nil {
+			out = append(out, p)
+		}
+	}
+	return out, sc.Err()
 }
 
 // ---- HTML output ----
@@ -404,22 +596,24 @@ const htmlTmpl = `<!DOCTYPE html>
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f2f2f2; padding: 24px; }
 h1 { text-align: center; font-size: 26px; color: #111; margin-bottom: 6px; }
 .sub { text-align: center; color: #777; font-size: 13px; margin-bottom: 32px; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 18px; max-width: 1400px; margin: 0 auto; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 18px; max-width: 1400px; margin: 0 auto; }
 .card { background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 6px rgba(0,0,0,.08); display: flex; flex-direction: column; transition: transform .15s, box-shadow .15s; }
 .card:hover { transform: translateY(-3px); box-shadow: 0 6px 20px rgba(0,0,0,.13); }
-.card img { width: 100%; height: 195px; object-fit: cover; background: #eee; }
-.no-img { height: 195px; background: #eee; display: flex; align-items: center; justify-content: center; color: #bbb; font-size: 12px; }
-.body { padding: 12px; flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.card img { width: 100%; height: 200px; object-fit: cover; background: #eee; }
+.no-img { height: 200px; background: #eee; display: flex; align-items: center; justify-content: center; color: #bbb; font-size: 12px; }
+.body { padding: 12px; flex: 1; display: flex; flex-direction: column; gap: 7px; }
 .shop { font-size: 10px; text-transform: uppercase; letter-spacing: .6px; color: #999; }
-.name { font-size: 13px; color: #1a1a1a; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; flex: 1; }
+.name { font-size: 13px; color: #1a1a1a; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.variant-sel { width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 7px; font-size: 12px; color: #333; background: #fafafa; cursor: pointer; }
+.variant-sel:focus { outline: none; border-color: #888; }
 .price { font-size: 17px; font-weight: 700; color: #2d6a4f; }
-.buy { display: block; text-align: center; background: #111; color: #fff; text-decoration: none; padding: 9px; border-radius: 8px; font-size: 12px; font-weight: 600; margin-top: 4px; transition: background .15s; }
+.buy { display: block; text-align: center; background: #111; color: #fff; text-decoration: none; padding: 9px; border-radius: 8px; font-size: 12px; font-weight: 600; margin-top: auto; transition: background .15s; }
 .buy:hover { background: #333; }
 </style>
 </head>
 <body>
 <h1>Products</h1>
-<p class="sub">{{len .}} products scraped</p>
+<p class="sub">{{len .}} products</p>
 <div class="grid">
 {{range .}}
 <div class="card">
@@ -428,8 +622,19 @@ h1 { text-align: center; font-size: 26px; color: #111; margin-bottom: 6px; }
   <div class="body">
     <span class="shop">{{.Shop}}</span>
     <span class="name">{{.Name}}</span>
-    <span class="price">{{if .Price}}{{.Currency}} {{.Price}}{{else}}—{{end}}</span>
-    <a class="buy" href="{{.URL}}" target="_blank" rel="noopener">Buy Now ↗</a>
+    {{if .Multi}}
+    <select class="variant-sel" onchange="
+      var o=this.options[this.selectedIndex];
+      var c=this.closest('.card');
+      c.querySelector('.price').textContent=o.dataset.price;
+      c.querySelector('.buy').href=o.dataset.url;
+    ">
+      {{range .Variants}}<option data-price="{{.DisplayPrice}}" data-url="{{.URL}}">{{.Label}}</option>
+      {{end}}
+    </select>
+    {{end}}
+    <span class="price">{{.First.DisplayPrice}}</span>
+    <a class="buy" href="{{.First.URL}}" target="_blank" rel="noopener">Buy Now ↗</a>
   </div>
 </div>
 {{end}}
@@ -442,17 +647,27 @@ h1 { text-align: center; font-size: 26px; color: #111; margin-bottom: 6px; }
 func main() {
 	rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	var (
-		products []Product
-		mu       sync.Mutex
-		wg       sync.WaitGroup
-		count    atomic.Int32
-	)
+	jsonlOut, err := os.Create("products.jsonl")
+	if err != nil {
+		fmt.Println("cannot create products.jsonl:", err)
+		os.Exit(1)
+	}
+	jsonlWriter := bufio.NewWriter(jsonlOut)
 
-	sem := make(chan struct{}, concurrency)
+	writeProduct := func(p *Product) error {
+		data, err := json.Marshal(p)
+		if err != nil {
+			return err
+		}
+		jsonlWriter.Write(data)
+		jsonlWriter.WriteByte('\n')
+		return jsonlWriter.Flush()
+	}
+
+	count := 0
 
 	for _, site := range shopifySites {
-		if int(count.Load()) >= maxProducts {
+		if count >= maxProducts {
 			break
 		}
 
@@ -467,60 +682,68 @@ func main() {
 		shopName := shopLabel(site)
 
 		for _, sm := range sitemaps {
-			if int(count.Load()) >= maxProducts {
+			if count >= maxProducts {
 				break
 			}
+
+			fmt.Printf("  fetching %s\n", sm)
 			entries, err := getProductURLs(sm)
 			if err != nil {
 				fmt.Printf("  sitemap parse error: %v\n", err)
 				continue
 			}
+			fmt.Printf("  %d product URLs — starting scrape\n\n", len(entries))
 
-			for _, entry := range entries {
-				if int(count.Load()) >= maxProducts {
+			for i, entry := range entries {
+				if count >= maxProducts {
 					break
 				}
 
-				wg.Add(1)
-				sem <- struct{}{}
-				go func(e URLEntry, shop string) {
-					defer wg.Done()
-					defer func() { <-sem }()
-
-					if int(count.Load()) >= maxProducts {
-						return
-					}
-					p, err := scrapeProduct(e, shop)
-					if err != nil {
-						return
-					}
-					mu.Lock()
-					if int(count.Load()) < maxProducts {
-						products = append(products, *p)
-						n := count.Add(1)
-						fmt.Printf("  [%3d] %-50s %s %s\n", n, truncate(p.Name, 50), p.Currency, p.Price)
-					}
-					mu.Unlock()
-				}(entry, shopName)
+				fmt.Printf("  [%d/%d] %s\n", i+1, len(entries), entry.Loc)
+				p, err := scrapeProduct(entry, shopName)
+				if err != nil {
+					fmt.Printf("         skip: %v\n", err)
+					continue
+				}
+				if err := writeProduct(p); err != nil {
+					fmt.Printf("         jsonl write error: %v\n", err)
+					continue
+				}
+				count++
+				varInfo := ""
+				if len(p.Variants) > 1 {
+					varInfo = fmt.Sprintf("(%d variants, from %s %s)", len(p.Variants), p.Variants[0].Currency, p.Variants[0].Price)
+				} else {
+					varInfo = p.Variants[0].Currency + " " + p.Variants[0].Price
+				}
+				fmt.Printf("         ✓ [%d] %s — %s\n", count, truncate(p.Name, 48), varInfo)
 			}
 		}
 	}
 
-	wg.Wait()
-	fmt.Printf("\nScraped %d products. Writing products.html…\n", len(products))
+	jsonlWriter.Flush()
+	jsonlOut.Close()
 
-	tmpl := template.Must(template.New("p").Parse(htmlTmpl))
-	f, err := os.Create("products.html")
+	fmt.Printf("\nReading products.jsonl → generating products.html…\n")
+	products, err := loadProducts("products.jsonl")
 	if err != nil {
-		fmt.Println("create file:", err)
+		fmt.Println("load error:", err)
 		os.Exit(1)
 	}
-	defer f.Close()
-	if err := tmpl.Execute(f, products); err != nil {
+
+	tmpl := template.Must(template.New("p").Parse(htmlTmpl))
+	htmlOut, err := os.Create("products.html")
+	if err != nil {
+		fmt.Println("create html:", err)
+		os.Exit(1)
+	}
+	defer htmlOut.Close()
+	if err := tmpl.Execute(htmlOut, products); err != nil {
 		fmt.Println("template:", err)
 		os.Exit(1)
 	}
-	fmt.Println("Done! Open products.html in your browser.")
+
+	fmt.Printf("Done! %d products → products.html\n", len(products))
 }
 
 func shopLabel(site string) string {
