@@ -1,284 +1,290 @@
 "use client";
 
-import { useState, useMemo } from "react";
-import { PRODUCTS } from "@/lib/visibility-data";
-import type { Product, ProductStatus } from "@/lib/visibility-data";
-import { StatusBadge } from "@/components/visibility/status-badge";
-import { SlidePanel } from "@/components/visibility/slide-panel";
+import { useEffect, useMemo, useState } from "react";
 
-const STATUS_FILTERS: { label: string; value: ProductStatus | "all" }[] = [
-  { label: "All", value: "all" },
-  { label: "Indexed", value: "indexed" },
-  { label: "Not Indexed", value: "not_indexed" },
-  { label: "Error", value: "error" },
-];
+type ProductStatus = "draft" | "active" | "archived";
 
-type SortField = "title" | "clicks" | "impressions" | "ctr" | "position" | "visibilityScore";
-type SortDir = "asc" | "desc";
+type Product = {
+  id: number;
+  sitemap_id: number;
+  source_url: string;
+  title: string;
+  image: string | null;
+  shop: string;
+  price: string | null;
+  currency: string | null;
+  status: ProductStatus;
+  notes: string;
+  updated_at: string;
+};
 
-function SortIcon({ field, current, dir }: { field: SortField; current: SortField; dir: SortDir }) {
-  if (field !== current) {
-    return (
-      <svg className="h-3 w-3 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l4-4 4 4m0 6l-4 4-4-4" />
-      </svg>
-    );
-  }
-  return (
-    <svg className="h-3 w-3 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d={dir === "desc" ? "M19 9l-7 7-7-7" : "M5 15l7-7 7 7"} />
-    </svg>
-  );
-}
+const FILTERS: Array<ProductStatus | "all"> = ["all", "draft", "active", "archived"];
 
 export default function ProductsPage() {
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<ProductStatus | "all">("all");
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [sort, setSort] = useState<{ field: SortField; dir: SortDir }>({
-    field: "clicks",
-    dir: "desc",
-  });
+  const [products, setProducts] = useState<Product[]>([]);
+  const [selected, setSelected] = useState<Product | null>(null);
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<ProductStatus | "all">("all");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
-  const handleSort = (field: SortField) => {
-    setSort((prev) =>
-      prev.field === field
-        ? { field, dir: prev.dir === "desc" ? "asc" : "desc" }
-        : { field, dir: "desc" }
-    );
-  };
+  async function loadProducts() {
+    const res = await fetch("/api/scraper/products", { cache: "no-store" });
+    if (!res.ok) {
+      setError("Could not load products");
+      setLoading(false);
+      return;
+    }
+    const rows: Product[] = await res.json();
+    setProducts(rows);
+    setSelected((current) => rows.find((row) => row.id === current?.id) ?? current);
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    loadProducts();
+  }, []);
 
   const filtered = useMemo(() => {
-    let rows = [...PRODUCTS];
+    const q = query.trim().toLowerCase();
+    return products.filter((product) => {
+      const matchesStatus = filter === "all" || product.status === filter;
+      const matchesQuery =
+        !q ||
+        product.title.toLowerCase().includes(q) ||
+        product.source_url.toLowerCase().includes(q) ||
+        product.shop.toLowerCase().includes(q);
+      return matchesStatus && matchesQuery;
+    });
+  }, [products, query, filter]);
 
-    if (statusFilter !== "all") {
-      rows = rows.filter((p) => p.status === statusFilter);
-    }
+  const counts = useMemo(() => {
+    return {
+      all: products.length,
+      draft: products.filter((product) => product.status === "draft").length,
+      active: products.filter((product) => product.status === "active").length,
+      archived: products.filter((product) => product.status === "archived").length,
+    };
+  }, [products]);
 
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      rows = rows.filter(
-        (p) =>
-          p.title.toLowerCase().includes(q) ||
-          p.url.toLowerCase().includes(q)
-      );
-    }
+  async function saveProduct(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!selected) return;
 
-    rows.sort((a, b) => {
-      const aVal = a[sort.field];
-      const bVal = b[sort.field];
-      const diff =
-        typeof aVal === "string" ? aVal.localeCompare(bVal as string) : (aVal as number) - (bVal as number);
-      return sort.dir === "desc" ? -diff : diff;
+    const form = new FormData(e.currentTarget);
+    setSaving(true);
+    setError("");
+
+    const res = await fetch("/api/scraper/products", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: selected.id,
+        title: form.get("title"),
+        price: form.get("price"),
+        currency: form.get("currency"),
+        status: form.get("status"),
+        notes: form.get("notes"),
+      }),
     });
 
-    return rows;
-  }, [search, statusFilter, sort]);
+    setSaving(false);
 
-  const counts = useMemo(() => ({
-    all: PRODUCTS.length,
-    indexed: PRODUCTS.filter((p) => p.status === "indexed").length,
-    not_indexed: PRODUCTS.filter((p) => p.status === "not_indexed").length,
-    error: PRODUCTS.filter((p) => p.status === "error").length,
-  }), []);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setError(body.error ?? "Could not update product");
+      return;
+    }
 
-  const thClass = "px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide select-none cursor-pointer hover:text-gray-600 transition-colors";
-  const thRightClass = `${thClass} text-right`;
+    const updated: Product = await res.json();
+    setProducts((prev) => prev.map((product) => (product.id === updated.id ? updated : product)));
+    setSelected(updated);
+  }
 
   return (
-    <>
-      <div className={`px-10 py-8 transition-all duration-200 ${selectedProduct ? "mr-[420px]" : ""}`}>
-        {/* Header */}
-        <div className="flex items-center justify-between mb-5">
+    <div className="px-8 py-6 h-full flex gap-5 overflow-hidden">
+      <section className="min-w-0 flex-1 flex flex-col">
+        <div className="flex items-center justify-between gap-4 mb-5">
           <div>
             <h1 className="text-xl font-semibold text-gray-900">Products</h1>
-            <p className="mt-1.5 text-sm text-gray-500">
-              {filtered.length} product{filtered.length !== 1 ? "s" : ""} ·{" "}
-              {counts.indexed} indexed · {counts.error} with errors
+            <p className="mt-1 text-sm text-gray-500">
+              {filtered.length} visible · {counts.active} active · {counts.draft} draft
             </p>
           </div>
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search scraped products"
+            className="w-72 px-3 py-2 text-sm border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-gray-400"
+          />
         </div>
 
-        {/* Filter bar */}
-        <div className="flex items-center justify-between mb-5">
-          {/* Status tabs */}
-          <div className="flex items-center gap-0 border border-gray-200 rounded-md overflow-hidden">
-            {STATUS_FILTERS.map((f) => {
-              const count = f.value === "all" ? counts.all : counts[f.value];
-              return (
-                <button
-                  key={f.value}
-                  onClick={() => setStatusFilter(f.value)}
-                  className={`px-4 py-2 text-sm font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
-                    statusFilter === f.value
-                      ? "bg-gray-900 text-white"
-                      : "bg-white text-gray-500 hover:bg-gray-50 hover:text-gray-700"
-                  } ${f.value !== "all" ? "border-l border-gray-200" : ""}`}
-                >
-                  {f.label}
-                  <span
-                    className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
-                      statusFilter === f.value ? "bg-white/20 text-white" : "bg-gray-100 text-gray-500"
-                    }`}
-                  >
-                    {count}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Search */}
-          <div className="relative">
-            <svg
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
+        <div className="flex items-center gap-2 mb-4">
+          {FILTERS.map((item) => (
+            <button
+              key={item}
+              onClick={() => setFilter(item)}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium capitalize ${
+                filter === item
+                  ? "bg-gray-900 text-white"
+                  : "bg-white border border-gray-200 text-gray-600 hover:bg-gray-50"
+              }`}
             >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            <input
-              type="text"
-              placeholder="Search products..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-md bg-white text-gray-800 placeholder-gray-400 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 w-56 transition-all"
-            />
-          </div>
+              {item.replace("_", " ")} {counts[item]}
+            </button>
+          ))}
         </div>
 
-        {/* Table */}
-        <div className="bg-white border border-gray-200 rounded-md overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[800px]">
-              <thead className="sticky top-0 z-10">
-                <tr className="border-b border-gray-200 bg-gray-50">
-                  <th className={thClass} onClick={() => handleSort("title")} style={{ width: "30%" }}>
-                    <span className="flex items-center gap-1">
-                      Product <SortIcon field="title" current={sort.field} dir={sort.dir} />
-                    </span>
-                  </th>
-                  <th className={thClass} style={{ width: "22%" }}>
-                    URL
-                  </th>
-                  <th className={thClass} onClick={() => handleSort("visibilityScore")} style={{ width: "12%" }}>
-                    <span className="flex items-center gap-1">
-                      Status <SortIcon field="visibilityScore" current={sort.field} dir={sort.dir} />
-                    </span>
-                  </th>
-                  <th className={thClass} style={{ width: "10%" }}>
-                    Last Crawled
-                  </th>
-                  <th className={thRightClass} onClick={() => handleSort("visibilityScore")} style={{ width: "11%" }}>
-                    <span className="flex items-center justify-end gap-1">
-                      Score <SortIcon field="visibilityScore" current={sort.field} dir={sort.dir} />
-                    </span>
-                  </th>
-                  <th className={thRightClass} onClick={() => handleSort("clicks")} style={{ width: "8%" }}>
-                    <span className="flex items-center justify-end gap-1">
-                      Clicks <SortIcon field="clicks" current={sort.field} dir={sort.dir} />
-                    </span>
-                  </th>
-                  <th className={thRightClass} onClick={() => handleSort("impressions")} style={{ width: "7%" }}>
-                    <span className="flex items-center justify-end gap-1">
-                      Impr. <SortIcon field="impressions" current={sort.field} dir={sort.dir} />
-                    </span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.length === 0 && (
+        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden flex-1 min-h-0">
+          <div className="h-full overflow-y-auto">
+            {loading ? (
+              <div className="px-5 py-10 text-center text-sm text-gray-400">Loading products...</div>
+            ) : filtered.length === 0 ? (
+              <div className="px-5 py-10 text-center text-sm text-gray-400">
+                No products found. Add a sitemap in Scraper first.
+              </div>
+            ) : (
+              <table className="w-full min-w-[760px]">
+                <thead className="sticky top-0 bg-gray-50 border-b border-gray-200">
                   <tr>
-                    <td colSpan={7} className="px-5 py-10 text-center text-xs text-gray-400">
-                      No products match the current filters.
-                    </td>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Product</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Shop</th>
+                    <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500">Price</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Status</th>
                   </tr>
-                )}
-                {filtered.map((product) => {
-                  const isSelected = selectedProduct?.id === product.id;
-                  return (
+                </thead>
+                <tbody>
+                  {filtered.map((product) => (
                     <tr
                       key={product.id}
-                      onClick={() =>
-                        setSelectedProduct(isSelected ? null : product)
-                      }
-                      className={`border-b border-gray-50 cursor-pointer transition-colors last:border-0 ${
-                        isSelected
-                          ? "bg-blue-50"
-                          : "hover:bg-[#f0f4ff]/60"
+                      onClick={() => setSelected(product)}
+                      className={`border-b border-gray-50 last:border-0 cursor-pointer hover:bg-gray-50 ${
+                        selected?.id === product.id ? "bg-blue-50" : ""
                       }`}
                     >
-                      <td className="px-5 py-4">
-                        <span className="text-xs font-medium text-gray-900 leading-snug">
-                          {product.title}
-                        </span>
-                        {product.issues.length > 0 && (
-                          <span className="ml-2 inline-flex items-center gap-0.5 text-[10px] text-red-500">
-                            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                            </svg>
-                            {product.issues.length}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-5 py-4">
-                        <span className="text-[11px] font-mono text-gray-400 truncate block max-w-[180px]">
-                          {product.url}
-                        </span>
-                      </td>
-                      <td className="px-5 py-4">
-                        <StatusBadge status={product.status} />
-                      </td>
-                      <td className="px-4 py-3 text-xs text-gray-500">
-                        {product.lastCrawled}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <div className="h-1 w-14 bg-gray-100 rounded-full overflow-hidden">
-                            <div
-                              className={`h-full rounded-full ${
-                                product.visibilityScore > 70
-                                  ? "bg-emerald-400"
-                                  : product.visibilityScore > 30
-                                  ? "bg-amber-400"
-                                  : "bg-red-400"
-                              }`}
-                              style={{ width: `${product.visibilityScore}%` }}
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          {product.image ? (
+                            <img
+                              src={product.image}
+                              alt=""
+                              className="h-10 w-10 rounded-md object-cover bg-gray-100 shrink-0"
                             />
+                          ) : (
+                            <div className="h-10 w-10 rounded-md bg-gray-100 shrink-0" />
+                          )}
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-gray-900 truncate">{product.title}</p>
+                            <p className="text-xs text-gray-400 truncate">{product.source_url}</p>
                           </div>
-                          <span className="text-xs tabular-nums text-gray-700 w-5 text-right">
-                            {product.visibilityScore}
-                          </span>
                         </div>
                       </td>
+                      <td className="px-4 py-3 text-xs text-gray-500">{product.shop}</td>
                       <td className="px-4 py-3 text-right text-xs tabular-nums text-gray-700">
-                        {product.clicks > 0 ? product.clicks.toLocaleString() : "—"}
+                        {product.price ? `${product.currency ?? ""} ${product.price}`.trim() : "-"}
                       </td>
-                      <td className="px-4 py-3 text-right text-xs tabular-nums text-gray-500">
-                        {product.impressions > 0 ? product.impressions.toLocaleString() : "—"}
+                      <td className="px-4 py-3">
+                        <span className="rounded-full bg-gray-100 px-2 py-1 text-xs font-medium capitalize text-gray-600">
+                          {product.status}
+                        </span>
                       </td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
+      </section>
 
-        {/* Footer count */}
-        {filtered.length > 0 && (
-          <p className="mt-3 text-xs text-gray-400 text-right">
-            Showing {filtered.length} of {PRODUCTS.length} products
-          </p>
+      <aside className="w-[380px] shrink-0 bg-white border border-gray-200 rounded-lg overflow-hidden">
+        {selected ? (
+          <form onSubmit={saveProduct} className="h-full flex flex-col">
+            <div className="px-5 py-4 border-b border-gray-100">
+              <h2 className="text-sm font-semibold text-gray-900">Edit product</h2>
+              <p className="mt-1 text-xs text-gray-400 truncate">{selected.source_url}</p>
+            </div>
+
+            <div className="p-5 space-y-4 flex-1 overflow-y-auto">
+              <label className="block">
+                <span className="text-xs font-medium text-gray-700">Title</span>
+                <input
+                  name="title"
+                  defaultValue={selected.title}
+                  required
+                  className="mt-1 w-full px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-gray-400"
+                />
+              </label>
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block">
+                  <span className="text-xs font-medium text-gray-700">Price</span>
+                  <input
+                    name="price"
+                    defaultValue={selected.price ?? ""}
+                    className="mt-1 w-full px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-gray-400"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-xs font-medium text-gray-700">Currency</span>
+                  <input
+                    name="currency"
+                    defaultValue={selected.currency ?? ""}
+                    className="mt-1 w-full px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-gray-400"
+                  />
+                </label>
+              </div>
+
+              <label className="block">
+                <span className="text-xs font-medium text-gray-700">Status</span>
+                <select
+                  name="status"
+                  defaultValue={selected.status}
+                  className="mt-1 w-full px-3 py-2 text-sm border border-gray-200 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-gray-400"
+                >
+                  <option value="draft">Draft</option>
+                  <option value="active">Active</option>
+                  <option value="archived">Archived</option>
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="text-xs font-medium text-gray-700">Notes</span>
+                <textarea
+                  name="notes"
+                  defaultValue={selected.notes}
+                  rows={5}
+                  className="mt-1 w-full px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-gray-400"
+                />
+              </label>
+
+              {error && <p className="text-xs text-red-500">{error}</p>}
+            </div>
+
+            <div className="px-5 py-4 border-t border-gray-100 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setSelected(null)}
+                className="px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 rounded-md"
+              >
+                Close
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                className="px-4 py-2 text-sm font-medium bg-gray-900 text-white rounded-md hover:bg-gray-700 disabled:opacity-50"
+              >
+                {saving ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="h-full flex items-center justify-center px-8 text-center text-sm text-gray-400">
+            Select a product to update its title, price, status, or internal notes.
+          </div>
         )}
-      </div>
-
-      <SlidePanel
-        product={selectedProduct}
-        onClose={() => setSelectedProduct(null)}
-      />
-    </>
+      </aside>
+    </div>
   );
 }

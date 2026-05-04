@@ -1,11 +1,16 @@
 import { Sidebar } from "@/components/visibility/sidebar";
 import { Topbar } from "@/components/visibility/topbar";
+import { getServerSession } from "@/lib/session";
+import { redirect } from "next/navigation";
 
-export default function VisibilityLayout({
+export default async function VisibilityLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const session = await getServerSession();
+  if (!session) redirect("/login");
+
   return (
     <div className="flex h-screen bg-[#f0f4fa] overflow-hidden">
       <Sidebar />

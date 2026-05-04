@@ -5,7 +5,7 @@ import { useState, useEffect } from "react";
 import {
   Lightbulb,
   Bug,
-  Github,
+  GitBranch,
   MessageCircle,
   Clock,
   User,
@@ -266,7 +266,7 @@ export function FeedbackDashboard() {
                         onClick={() => handleMoveToGithub(item)}
                         className="flex items-center gap-1 px-2 py-1 text-xs bg-neutral-800 text-white rounded hover:bg-neutral-700 transition-colors"
                       >
-                        <Github className="w-3 h-3" />
+                        <GitBranch className="w-3 h-3" />
                         Move to GitHub
                       </button>
                       <button
@@ -345,7 +345,7 @@ export function FeedbackDashboard() {
                         onClick={() => handleMoveToGithub(item)}
                         className="flex items-center gap-1 px-2 py-1 text-xs bg-neutral-800 text-white rounded hover:bg-neutral-700 transition-colors"
                       >
-                        <Github className="w-3 h-3" />
+                        <GitBranch className="w-3 h-3" />
                         Create Issue
                       </button>
                       <button

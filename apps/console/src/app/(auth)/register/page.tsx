@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { authClient } from "@/lib/auth-client";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -12,13 +13,33 @@ export default function RegisterPage() {
     email: "",
     password: "",
   });
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((prev) => ({ ...prev, [key]: e.target.value }));
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setLoading(true);
+    setError("");
+
+    const { error } = await authClient.signUp.email({
+      name: form.name,
+      email: form.email,
+      password: form.password,
+      callbackURL: "/visibility",
+    });
+
+    setLoading(false);
+
+    if (error) {
+      setError(error.message ?? "Could not create account");
+      return;
+    }
+
     router.push("/visibility");
+    router.refresh();
   }
 
   return (
@@ -104,11 +125,14 @@ export default function RegisterPage() {
 
         <button
           type="submit"
+          disabled={loading}
           className="w-full py-3 text-sm font-medium bg-gray-900 text-white rounded-md hover:bg-gray-800 transition-colors mt-2"
         >
-          Create account
+          {loading ? "Creating..." : "Create account"}
         </button>
       </form>
+
+      {error && <p className="mt-4 text-sm text-red-500">{error}</p>}
 
       <p className="mt-8 text-center text-sm text-gray-500">
         Already have an account?{" "}

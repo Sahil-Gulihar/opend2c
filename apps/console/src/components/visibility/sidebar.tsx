@@ -51,6 +51,16 @@ const NAV_ITEMS = [
     ),
   },
   {
+    label: "Scraper",
+    href: "/visibility/scraper",
+    icon: (
+      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m6-6H6" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M4 4h16v16H4z" />
+      </svg>
+    ),
+  },
+  {
     label: "Crawl",
     href: "/visibility/crawl",
     icon: (
