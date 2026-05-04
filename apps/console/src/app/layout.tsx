@@ -4,9 +4,6 @@ import { Poppins, Inter, Instrument_Sans, Public_Sans } from "next/font/google";
 import "@/styles/globals.css";
 import { cn } from "@/lib/utils";
 import RootProviders from "@/components/providers";
-import { UserJotWidget } from "@/components/userjot-widget";
-import Script from "next/script";
-import IntercomChat from "@/components/IntercomChat";
 import { Analytics } from "@vercel/analytics/next";
 import { generateTitle, generateDescription } from "@/lib/seo";
 

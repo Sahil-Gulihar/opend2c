@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, ArrowRight } from "lucide-react";
+import { ArrowBack, ArrowForward } from "google-material-icons/outlined";
 import { Navbar } from "@/components/navbar";
 import Footer from "@/components/footer";
 
@@ -26,14 +26,14 @@ export default function NotFound() {
           <div className="flex justify-center items-center gap-4">
             <Button variant="lightgray" size="lg">
               <Link href="/" className="flex items-center gap-2">
-                <ArrowLeft className="h-5 w-5" />
+                <ArrowBack size={20} color="currentColor" />
                 Back to Home
               </Link>
             </Button>
             <Button variant="blue" size="lg">
               <Link href="/" className="flex items-center gap-2">
                 Play with Us
-                <ArrowRight className="h-5 w-5" />
+                <ArrowForward size={20} color="currentColor" />
               </Link>
             </Button>
           </div>
