@@ -5,6 +5,7 @@ import {
   listSitemaps,
   markSitemapDone,
   markSitemapFailed,
+  updateSitemapProgress,
   upsertProducts,
 } from "@/lib/scraper-store";
 import { scrapeProductsFromSitemap } from "@/lib/sitemap-scraper";
@@ -36,20 +37,21 @@ export async function POST(req: NextRequest) {
   }
 
   const sitemapId = await createSitemap(session.user.id, url);
+  const userId = session.user.id;
 
-  try {
-    const products = await scrapeProductsFromSitemap(url);
-    await upsertProducts(session.user.id, sitemapId, products);
-    await markSitemapDone(sitemapId);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to scrape sitemap";
-    await markSitemapFailed(sitemapId, message);
-    return NextResponse.json({ error: message }, { status: 502 });
-  }
+  // Fire-and-forget — scrape in background so SSE can stream progress
+  void (async () => {
+    try {
+      const products = await scrapeProductsFromSitemap(url, async (scraped, total) => {
+        await updateSitemapProgress(sitemapId, scraped, total);
+      });
+      await upsertProducts(userId, sitemapId, products);
+      await markSitemapDone(sitemapId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to scrape sitemap";
+      await markSitemapFailed(sitemapId, message);
+    }
+  })();
 
-  const sitemaps = await listSitemaps(session.user.id);
-  return NextResponse.json(sitemaps.find((sitemap) => sitemap.id === sitemapId), {
-    status: 201,
-  });
+  return NextResponse.json({ id: sitemapId }, { status: 202 });
 }
-

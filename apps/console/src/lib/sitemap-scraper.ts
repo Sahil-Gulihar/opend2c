@@ -15,17 +15,22 @@ type Offer = {
 
 const MAX_PRODUCTS_PER_SITEMAP = 80;
 
-export async function scrapeProductsFromSitemap(sitemapUrl: string) {
+export async function scrapeProductsFromSitemap(
+  sitemapUrl: string,
+  onProgress?: (scraped: number, total: number) => void,
+) {
   const sitemap = await fetchText(sitemapUrl);
   const urls = extractLocs(sitemap)
     .filter((url) => /product|\/p\//i.test(url))
     .slice(0, MAX_PRODUCTS_PER_SITEMAP);
 
+  const total = urls.length;
   const products: ScrapedProduct[] = [];
 
   for (const url of urls) {
     const product = await scrapeProduct(url);
     if (product) products.push(product);
+    onProgress?.(products.length, total);
   }
 
   return products;
@@ -157,4 +162,3 @@ function decodeXml(value: string) {
     .replaceAll("&quot;", "\"")
     .replaceAll("&apos;", "'");
 }
-

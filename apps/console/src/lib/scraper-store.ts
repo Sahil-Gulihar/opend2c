@@ -5,6 +5,8 @@ export type SavedSitemap = {
   url: string;
   status: "queued" | "running" | "done" | "failed";
   product_count: number;
+  progress_scraped: number;
+  progress_total: number;
   error: string | null;
   created_at: string;
   updated_at: string;
@@ -25,6 +27,18 @@ export type SavedProduct = {
   updated_at: string;
 };
 
+export type Brand = {
+  id: number;
+  user_id: string;
+  slug: string;
+  name: string;
+  description: string;
+  logo_url: string | null;
+  website_url: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 let initialized = false;
 
 export async function ensureScraperTables() {
@@ -36,6 +50,8 @@ export async function ensureScraperTables() {
       user_id TEXT NOT NULL,
       url TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'queued',
+      progress_scraped INT NOT NULL DEFAULT 0,
+      progress_total INT NOT NULL DEFAULT 0,
       error TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -58,10 +74,31 @@ export async function ensureScraperTables() {
       UNIQUE(user_id, source_url)
     );
 
+    CREATE TABLE IF NOT EXISTS brands (
+      id BIGSERIAL PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      logo_url TEXT,
+      website_url TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(slug)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_scraper_sitemaps_user_id ON scraper_sitemaps(user_id);
     CREATE INDEX IF NOT EXISTS idx_scraper_products_user_id ON scraper_products(user_id);
     CREATE INDEX IF NOT EXISTS idx_scraper_products_sitemap_id ON scraper_products(sitemap_id);
+    CREATE INDEX IF NOT EXISTS idx_brands_user_id ON brands(user_id);
+    CREATE INDEX IF NOT EXISTS idx_brands_slug ON brands(slug);
   `);
+
+  // Migrate existing tables that may lack new columns
+  await db.query(`
+    ALTER TABLE scraper_sitemaps ADD COLUMN IF NOT EXISTS progress_scraped INT NOT NULL DEFAULT 0;
+    ALTER TABLE scraper_sitemaps ADD COLUMN IF NOT EXISTS progress_total INT NOT NULL DEFAULT 0;
+  `).catch(() => {});
 
   initialized = true;
 }
@@ -71,6 +108,7 @@ export async function listSitemaps(userId: string): Promise<SavedSitemap[]> {
   const { rows } = await db.query<SavedSitemap>(
     `
       SELECT s.id, s.url, s.status, COUNT(p.id)::int AS product_count,
+             s.progress_scraped, s.progress_total,
              s.error, s.created_at::text, s.updated_at::text
       FROM scraper_sitemaps s
       LEFT JOIN scraper_products p ON p.sitemap_id = s.id
@@ -83,6 +121,23 @@ export async function listSitemaps(userId: string): Promise<SavedSitemap[]> {
   return rows;
 }
 
+export async function getSitemap(id: number): Promise<SavedSitemap | null> {
+  await ensureScraperTables();
+  const { rows } = await db.query<SavedSitemap>(
+    `
+      SELECT s.id, s.url, s.status, COUNT(p.id)::int AS product_count,
+             s.progress_scraped, s.progress_total,
+             s.error, s.created_at::text, s.updated_at::text
+      FROM scraper_sitemaps s
+      LEFT JOIN scraper_products p ON p.sitemap_id = s.id
+      WHERE s.id = $1
+      GROUP BY s.id
+    `,
+    [id],
+  );
+  return rows[0] ?? null;
+}
+
 export async function createSitemap(userId: string, url: string) {
   await ensureScraperTables();
   const { rows } = await db.query<{ id: number }>(
@@ -90,6 +145,13 @@ export async function createSitemap(userId: string, url: string) {
     [userId, url],
   );
   return rows[0].id;
+}
+
+export async function updateSitemapProgress(id: number, scraped: number, total: number) {
+  await db.query(
+    `UPDATE scraper_sitemaps SET progress_scraped=$2, progress_total=$3, updated_at=NOW() WHERE id=$1`,
+    [id, scraped, total],
+  );
 }
 
 export async function markSitemapDone(id: number) {
@@ -193,3 +255,67 @@ export async function updateProduct(
   return rows[0] ?? null;
 }
 
+// ─── Brands ───────────────────────────────────────────────────────────────────
+
+export async function getBrandByUserId(userId: string): Promise<Brand | null> {
+  await ensureScraperTables();
+  const { rows } = await db.query<Brand>(
+    `SELECT id, user_id, slug, name, description, logo_url, website_url,
+            created_at::text, updated_at::text
+     FROM brands WHERE user_id = $1 LIMIT 1`,
+    [userId],
+  );
+  return rows[0] ?? null;
+}
+
+export async function getBrandBySlug(slug: string): Promise<Brand | null> {
+  await ensureScraperTables();
+  const { rows } = await db.query<Brand>(
+    `SELECT id, user_id, slug, name, description, logo_url, website_url,
+            created_at::text, updated_at::text
+     FROM brands WHERE slug = $1`,
+    [slug],
+  );
+  return rows[0] ?? null;
+}
+
+export async function upsertBrand(
+  userId: string,
+  input: Pick<Brand, "slug" | "name" | "description" | "logo_url" | "website_url">,
+): Promise<Brand> {
+  await ensureScraperTables();
+  const { rows } = await db.query<Brand>(
+    `
+      INSERT INTO brands (user_id, slug, name, description, logo_url, website_url)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (slug) DO UPDATE SET
+        name = EXCLUDED.name,
+        description = EXCLUDED.description,
+        logo_url = EXCLUDED.logo_url,
+        website_url = EXCLUDED.website_url,
+        updated_at = NOW()
+      WHERE brands.user_id = $1
+      RETURNING id, user_id, slug, name, description, logo_url, website_url,
+                created_at::text, updated_at::text
+    `,
+    [userId, input.slug, input.name, input.description, input.logo_url, input.website_url],
+  );
+  return rows[0];
+}
+
+export async function getPublicProducts(
+  brandUserId: string,
+): Promise<SavedProduct[]> {
+  await ensureScraperTables();
+  const { rows } = await db.query<SavedProduct>(
+    `
+      SELECT id, sitemap_id, source_url, title, image, shop, price, currency,
+             status, notes, created_at::text, updated_at::text
+      FROM scraper_products
+      WHERE user_id = $1 AND status = 'active'
+      ORDER BY updated_at DESC, id DESC
+    `,
+    [brandUserId],
+  );
+  return rows;
+}
