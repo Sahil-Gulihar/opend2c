@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import Script from "next/script";
 import { CoffeeCup } from "@/components/svgs";
 import Image from "next/image";
-import { TechSolutionsDialog } from "@/components/tech-solutions-dialog";
 import { Search } from "lucide-react";
 
 const CATEGORIES = ["All", "Tea", "Coffee", "Spices"] as const;
@@ -258,7 +257,6 @@ const techCards = [
 ];
 
 export default function Home() {
-  const [techDialogOpen, setTechDialogOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<Category>("All");
 
