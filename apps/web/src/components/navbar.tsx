@@ -2,8 +2,51 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Search } from "lucide-react";
+
+function SearchForm({
+  className,
+  inputClassName,
+  onSubmit,
+}: {
+  className?: string;
+  inputClassName?: string;
+  onSubmit?: () => void;
+}) {
+  const router = useRouter();
+  const [q, setQ] = useState("");
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = q.trim();
+    if (!trimmed) return;
+    onSubmit?.();
+    router.push(`/search?q=${encodeURIComponent(trimmed)}`);
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className={`flex items-center ${className ?? ""}`}>
+      <div className="relative flex-1">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-neutral-400 pointer-events-none" />
+        <input
+          type="text"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search products..."
+          className={`w-full rounded-l-md border border-neutral-200 bg-white py-1.5 pl-8 pr-3 text-sm text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-0 ${inputClassName ?? ""}`}
+        />
+      </div>
+      <button
+        type="submit"
+        className="rounded-r-md border border-l-0 border-neutral-200 bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-neutral-700 transition-colors shrink-0"
+      >
+        Search
+      </button>
+    </form>
+  );
+}
 
 export function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -21,14 +64,7 @@ export function Navbar() {
               Open D2C
             </Link>
 
-            <div className="relative hidden md:block w-full max-w-xs lg:max-w-sm">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-neutral-400 pointer-events-none" />
-              <input
-                type="text"
-                placeholder="Search products..."
-                className="w-full rounded-md border border-neutral-200 bg-white py-1.5 pl-8 pr-3 text-sm text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-0"
-              />
-            </div>
+            <SearchForm className="hidden md:flex w-full max-w-xs lg:max-w-sm" />
           </div>
 
           {/* RIGHT — nav links + store buttons */}
@@ -102,15 +138,7 @@ export function Navbar() {
             ✕
           </button>
 
-          {/* Mobile search */}
-          <div className="relative mb-4">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-neutral-400 pointer-events-none" />
-            <input
-              type="text"
-              placeholder="Search products..."
-              className="w-full rounded-md border border-neutral-200 bg-white py-2 pl-8 pr-3 text-sm placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-0"
-            />
-          </div>
+          <SearchForm className="mb-4" onSubmit={() => setMenuOpen(false)} />
 
           <nav className="flex flex-col gap-1 text-sm font-medium">
             {[

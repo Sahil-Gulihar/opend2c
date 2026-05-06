@@ -7,12 +7,7 @@ import { authClient } from "@/lib/auth-client";
 
 export default function RegisterPage() {
   const router = useRouter();
-  const [form, setForm] = useState({
-    name: "",
-    store: "",
-    email: "",
-    password: "",
-  });
+  const [form, setForm] = useState({ name: "", email: "", password: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -28,7 +23,7 @@ export default function RegisterPage() {
       name: form.name,
       email: form.email,
       password: form.password,
-      callbackURL: "/visibility",
+      callbackURL: "/onboarding",
     });
 
     setLoading(false);
@@ -38,7 +33,7 @@ export default function RegisterPage() {
       return;
     }
 
-    router.push("/visibility");
+    router.push("/onboarding");
     router.refresh();
   }
 
@@ -61,35 +56,19 @@ export default function RegisterPage() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-5">
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
-              Your name
-            </label>
-            <input
-              id="name"
-              type="text"
-              placeholder="Arjun"
-              value={form.name}
-              onChange={set("name")}
-              required
-              className="w-full px-4 py-3 text-sm border border-gray-200 rounded-md bg-white text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all"
-            />
-          </div>
-          <div>
-            <label htmlFor="store" className="block text-sm font-medium text-gray-700 mb-2">
-              Store name
-            </label>
-            <input
-              id="store"
-              type="text"
-              placeholder="My Store"
-              value={form.store}
-              onChange={set("store")}
-              required
-              className="w-full px-4 py-3 text-sm border border-gray-200 rounded-md bg-white text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all"
-            />
-          </div>
+        <div>
+          <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
+            Your name
+          </label>
+          <input
+            id="name"
+            type="text"
+            placeholder="Arjun"
+            value={form.name}
+            onChange={set("name")}
+            required
+            className="w-full px-4 py-3 text-sm border border-gray-200 rounded-md bg-white text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition-all"
+          />
         </div>
 
         <div>

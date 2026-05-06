@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "@/lib/session";
-import { listProducts, updateProduct } from "@/lib/scraper-store";
+import { bulkUpdateProducts, listProducts, updateProduct } from "@/lib/scraper-store";
 
 const STATUSES = new Set(["draft", "active", "archived"]);
 
@@ -43,4 +43,19 @@ export async function PATCH(req: NextRequest) {
   if (!product) return NextResponse.json({ error: "Product not found" }, { status: 404 });
 
   return NextResponse.json(product);
+}
+
+export async function POST(req: NextRequest) {
+  const session = await getServerSession();
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const body = await req.json().catch(() => null);
+  const ids: number[] = Array.isArray(body?.ids) ? body.ids.map(Number).filter(Number.isInteger) : [];
+  const status = typeof body?.status === "string" ? body.status : "";
+
+  if (ids.length === 0) return NextResponse.json({ error: "ids required" }, { status: 400 });
+  if (!STATUSES.has(status)) return NextResponse.json({ error: "Invalid status" }, { status: 400 });
+
+  await bulkUpdateProducts(session.user.id, ids, status);
+  return NextResponse.json({ updated: ids.length });
 }

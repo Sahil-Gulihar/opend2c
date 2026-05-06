@@ -320,3 +320,31 @@ export async function getPublicProducts(
   );
   return rows;
 }
+
+export async function getAllActiveProducts(): Promise<SavedProduct[]> {
+  await ensureScraperTables();
+  const { rows } = await db.query<SavedProduct>(
+    `
+      SELECT id, sitemap_id, source_url, title, image, shop, price, currency,
+             status, notes, created_at::text, updated_at::text
+      FROM scraper_products
+      WHERE status = 'active'
+      ORDER BY updated_at DESC, id DESC
+    `,
+  );
+  return rows;
+}
+
+export async function bulkUpdateProducts(
+  userId: string,
+  ids: number[],
+  status: string,
+): Promise<void> {
+  if (ids.length === 0) return;
+  const placeholders = ids.map((_, i) => `$${i + 3}`).join(", ");
+  await db.query(
+    `UPDATE scraper_products SET status=$1, updated_at=NOW()
+     WHERE user_id=$2 AND id IN (${placeholders})`,
+    [status, userId, ...ids],
+  );
+}
