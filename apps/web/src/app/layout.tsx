@@ -39,12 +39,15 @@ const fontPublicSans = Public_Sans({
   display: "swap",
 });
 
+const BASE_URL = "https://opend2c.com";
+const OG_IMAGE = `${BASE_URL}/og.png`;
+const DESCRIPTION = generateDescription(
+  "Open D2C is a free marketplace for Indian direct-to-consumer brands. List your brand, reach new customers, and grow.",
+);
+
 export const metadata: Metadata = {
-  metadataBase: new URL("https://opend2c.com"),
   title: generateTitle("Open D2C"),
-  description: generateDescription(
-    "We sell Indian tea, coffee and matcha to people who care about quality.",
-  ),
+  description: DESCRIPTION,
   icons: {
     icon: [
       { url: "/favicon.ico" },
@@ -70,26 +73,15 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: generateTitle("Open D2C"),
-    description: generateDescription(
-      "We sell Indian tea, coffee and matcha to people who care about quality.",
-    ),
-    images: [
-      {
-        url: "/og.png",
-        width: 1200,
-        height: 630,
-        alt: "Open D2C - Better customer experience with knowledgebase",
-      },
-    ],
+    description: DESCRIPTION,
+    images: [{ url: OG_IMAGE, width: 1200, height: 630, alt: "Open D2C — Free marketplace for Indian D2C brands" }],
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
     title: generateTitle("Open D2C"),
-    description: generateDescription(
-      "We sell Indian tea, coffee and matcha to people who care about quality.",
-    ),
-    images: ["/og.png"],
+    description: DESCRIPTION,
+    images: [OG_IMAGE],
   },
 };
 

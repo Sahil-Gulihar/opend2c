@@ -38,7 +38,7 @@ export default async function Home() {
             "@type": "Organization",
             name: "Open D2C",
             url: "https://opend2c.com",
-            description: "Global exporter of coffee, tea and spices.",
+            description: "Open marketplace for Indian direct-to-consumer brands.",
           }),
         }}
       />

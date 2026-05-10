@@ -16,7 +16,7 @@ export function generateDescription(text: string) {
   if (text.length < 140) {
     return (
       text +
-      " Explore global sourcing, exports, wholesale and retail coffee, tea and spices from Open D2C."
+      " Discover and shop Indian D2C brands — all in one open marketplace."
     );
   }
   return text;
