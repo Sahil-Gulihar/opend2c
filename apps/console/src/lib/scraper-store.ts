@@ -440,7 +440,14 @@ export async function getPublicProducts(
   return rows;
 }
 
+let productCache: { data: SavedProduct[]; expiresAt: number } | null = null;
+const PRODUCT_CACHE_TTL_MS = 60_000; // 60 seconds
+
 export async function getAllActiveProducts(): Promise<SavedProduct[]> {
+  const now = Date.now();
+  if (productCache && now < productCache.expiresAt) {
+    return productCache.data;
+  }
   await ensureScraperTables();
   const { rows } = await db.query<SavedProduct>(
     `
@@ -451,7 +458,12 @@ export async function getAllActiveProducts(): Promise<SavedProduct[]> {
       ORDER BY updated_at DESC, id DESC
     `,
   );
+  productCache = { data: rows, expiresAt: now + PRODUCT_CACHE_TTL_MS };
   return rows;
+}
+
+export function invalidateProductCache() {
+  productCache = null;
 }
 
 export async function bulkUpdateProducts(

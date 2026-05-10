@@ -15,7 +15,7 @@ async function fetchProducts(): Promise<Product[]> {
   const consoleUrl = (process.env.CONSOLE_URL ?? "http://localhost:3003").replace(/\/$/, "");
   try {
     const res = await fetch(`${consoleUrl}/api/public/products`, {
-      next: { revalidate: 60 },
+      next: { revalidate: 21600 },
     });
     if (!res.ok) return [];
     return res.json();
