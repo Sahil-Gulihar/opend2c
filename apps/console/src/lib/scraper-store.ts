@@ -466,6 +466,61 @@ export function invalidateProductCache() {
   productCache = null;
 }
 
+// Called by the crawler worker after a job completes.
+// Creates a sentinel sitemap row so the FK is satisfied, then upserts products
+// as active so they appear publicly immediately.
+export async function syncCrawlerProducts(
+  jobId: string,
+  products: Array<{
+    source_url: string;
+    title: string;
+    image: string | null;
+    shop: string;
+    price: string | null;
+    currency: string | null;
+  }>,
+) {
+  await ensureScraperTables();
+
+  const systemUserId = `crawler:${jobId}`;
+
+  // One sentinel sitemap row per crawler job — idempotent via user_id lookup
+  const { rows: existing } = await db.query<{ id: number }>(
+    `SELECT id FROM scraper_sitemaps WHERE user_id = $1 LIMIT 1`,
+    [systemUserId],
+  );
+
+  let sitemapId: number;
+  if (existing[0]) {
+    sitemapId = existing[0].id;
+  } else {
+    const { rows } = await db.query<{ id: number }>(
+      `INSERT INTO scraper_sitemaps (user_id, url, status, progress_scraped, progress_total)
+       VALUES ($1, $2, 'done', $3, $3) RETURNING id`,
+      [systemUserId, `crawler-job:${jobId}`, products.length],
+    );
+    sitemapId = rows[0].id;
+  }
+
+  for (const p of products) {
+    await db.query(
+      `INSERT INTO scraper_products
+         (sitemap_id, user_id, source_url, title, image, shop, price, currency, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active')
+       ON CONFLICT (user_id, source_url) DO UPDATE SET
+         title = EXCLUDED.title,
+         image = EXCLUDED.image,
+         shop = EXCLUDED.shop,
+         price = EXCLUDED.price,
+         currency = EXCLUDED.currency,
+         updated_at = NOW()`,
+      [sitemapId, systemUserId, p.source_url, p.title, p.image, p.shop, p.price, p.currency],
+    );
+  }
+
+  invalidateProductCache();
+}
+
 export async function bulkUpdateProducts(
   userId: string,
   ids: number[],

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { upsertProducts } from "@/lib/scraper-store";
+import { syncCrawlerProducts } from "@/lib/scraper-store";
 
 // Called by the crawler worker when a job completes.
 // Authenticated with the same WORKER_SECRET used by all crawler routes.
@@ -15,9 +15,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid payload" }, { status: 400 });
   }
 
-  const { jobId, userId, products } = body as {
+  const { jobId, products } = body as {
     jobId: string;
-    userId: string;
     products: Array<{
       source_url: string;
       title: string;
@@ -28,11 +27,7 @@ export async function POST(req: NextRequest) {
     }>;
   };
 
-  // userId is optional — fall back to a system sentinel so products are still
-  // visible publicly even if no console user owns this job.
-  const owner = userId ?? `crawler:${jobId}`;
-
-  await upsertProducts(owner, 0, products);
+  await syncCrawlerProducts(jobId, products);
 
   return NextResponse.json({ synced: products.length });
 }

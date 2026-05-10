@@ -93,6 +93,83 @@ func processJob(ctx context.Context, jobID string) {
 		Type: "done", Scraped: scraped, Skipped: skipped, Total: total,
 	})
 	log.Printf("[job %s] done: %d scraped, %d skipped", jobID, scraped, skipped)
+
+	go syncJobToConsole(jobID)
+}
+
+// syncJobToConsole pushes completed job products to the console's scraper_products
+// table so they appear on the public marketplace.
+func syncJobToConsole(jobID string) {
+	consoleURL := os.Getenv("CONSOLE_URL")
+	if consoleURL == "" {
+		log.Printf("[sync %s] CONSOLE_URL not set, skipping sync", jobID)
+		return
+	}
+	secret := os.Getenv("WORKER_SECRET")
+
+	products, err := dbGetProducts(jobID)
+	if err != nil {
+		log.Printf("[sync %s] fetch products: %v", jobID, err)
+		return
+	}
+
+	type syncProduct struct {
+		SourceURL string  `json:"source_url"`
+		Title     string  `json:"title"`
+		Image     *string `json:"image"`
+		Shop      string  `json:"shop"`
+		Price     *string `json:"price"`
+		Currency  *string `json:"currency"`
+	}
+
+	var payload struct {
+		JobID    string        `json:"jobId"`
+		Products []syncProduct `json:"products"`
+	}
+	payload.JobID = jobID
+	for _, p := range products {
+		sp := syncProduct{
+			Title: p.Name,
+			Shop:  p.Shop,
+		}
+		if p.Image != "" {
+			sp.Image = &p.Image
+		}
+		v := p.First()
+		if v.URL != "" {
+			sp.SourceURL = v.URL
+		}
+		if v.Price != "" {
+			sp.Price = &v.Price
+		}
+		if v.Currency != "" {
+			sp.Currency = &v.Currency
+		}
+		if sp.SourceURL == "" {
+			continue // skip products with no URL
+		}
+		payload.Products = append(payload.Products, sp)
+	}
+
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequest(http.MethodPost,
+		strings.TrimRight(consoleURL, "/")+"/api/crawler/sync",
+		strings.NewReader(string(body)),
+	)
+	if err != nil {
+		log.Printf("[sync %s] build request: %v", jobID, err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+secret)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("[sync %s] request failed: %v", jobID, err)
+		return
+	}
+	defer resp.Body.Close()
+	log.Printf("[sync %s] console sync → %d (%d products)", jobID, resp.StatusCode, len(payload.Products))
 }
 
 func workerLoop(ctx context.Context) {
