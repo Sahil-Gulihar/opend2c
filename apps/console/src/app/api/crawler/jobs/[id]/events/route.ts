@@ -10,7 +10,10 @@ export async function GET(
   let workerRes: Response;
   try {
     workerRes = await fetch(`${workerURL()}/jobs/${id}/events`, {
-      headers: { Accept: "text/event-stream" },
+      headers: {
+        Accept: "text/event-stream",
+        Authorization: `Bearer ${process.env.WORKER_SECRET ?? ""}`,
+      },
       signal: req.signal,
     });
   } catch {
