@@ -106,6 +106,16 @@ export async function ensureScraperTables() {
     ALTER TABLE scraper_products ADD COLUMN IF NOT EXISTS click_count INT NOT NULL DEFAULT 0;
   `).catch(() => {});
 
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS product_click_events (
+      id BIGSERIAL PRIMARY KEY,
+      product_id BIGINT NOT NULL,
+      clicked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_click_events_product_id ON product_click_events(product_id);
+    CREATE INDEX IF NOT EXISTS idx_click_events_clicked_at ON product_click_events(clicked_at);
+  `).catch(() => {});
+
   initialized = true;
 }
 
@@ -487,16 +497,19 @@ export function invalidateProductCache() {
   productCache = null;
 }
 
+export type DailyClicks = { date: string; clicks: number };
+
 export type ClickAnalytics = {
   totalClicks: number;
   totalProducts: number;
   activeProducts: number;
   topProducts: { id: number; title: string; shop: string; source_url: string; click_count: number }[];
+  dailyClicks: DailyClicks[];
 };
 
-export async function getClickAnalytics(): Promise<ClickAnalytics> {
+export async function getClickAnalytics(startDate: Date, endDate: Date): Promise<ClickAnalytics> {
   await ensureScraperTables();
-  const [{ rows: [summary] }, { rows: topProducts }] = await Promise.all([
+  const [{ rows: [summary] }, { rows: topProducts }, { rows: dailyRows }] = await Promise.all([
     db.query<{ total_clicks: string; total_products: string; active_products: string }>(`
       SELECT
         COALESCE(SUM(click_count), 0)::text AS total_clicks,
@@ -511,21 +524,32 @@ export async function getClickAnalytics(): Promise<ClickAnalytics> {
       ORDER BY click_count DESC
       LIMIT 10
     `),
+    db.query<{ date: string; clicks: string }>(`
+      SELECT
+        DATE(clicked_at AT TIME ZONE 'UTC')::text AS date,
+        COUNT(*)::text AS clicks
+      FROM product_click_events
+      WHERE clicked_at >= $1 AND clicked_at < $2
+      GROUP BY DATE(clicked_at AT TIME ZONE 'UTC')
+      ORDER BY date ASC
+    `, [startDate, endDate]),
   ]);
+
   return {
     totalClicks: Number(summary?.total_clicks ?? 0),
     totalProducts: Number(summary?.total_products ?? 0),
     activeProducts: Number(summary?.active_products ?? 0),
     topProducts,
+    dailyClicks: dailyRows.map((r) => ({ date: r.date, clicks: Number(r.clicks) })),
   };
 }
 
 export async function trackProductClick(productId: number): Promise<void> {
   await ensureScraperTables();
-  await db.query(
-    `UPDATE scraper_products SET click_count = click_count + 1 WHERE id = $1`,
-    [productId],
-  );
+  await Promise.all([
+    db.query(`UPDATE scraper_products SET click_count = click_count + 1 WHERE id = $1`, [productId]),
+    db.query(`INSERT INTO product_click_events (product_id) VALUES ($1)`, [productId]),
+  ]);
   invalidateProductCache();
 }
 
