@@ -487,6 +487,39 @@ export function invalidateProductCache() {
   productCache = null;
 }
 
+export type ClickAnalytics = {
+  totalClicks: number;
+  totalProducts: number;
+  activeProducts: number;
+  topProducts: { id: number; title: string; shop: string; source_url: string; click_count: number }[];
+};
+
+export async function getClickAnalytics(): Promise<ClickAnalytics> {
+  await ensureScraperTables();
+  const [{ rows: [summary] }, { rows: topProducts }] = await Promise.all([
+    db.query<{ total_clicks: string; total_products: string; active_products: string }>(`
+      SELECT
+        COALESCE(SUM(click_count), 0)::text AS total_clicks,
+        COUNT(*)::text AS total_products,
+        COUNT(*) FILTER (WHERE status = 'active')::text AS active_products
+      FROM scraper_products
+    `),
+    db.query<{ id: number; title: string; shop: string; source_url: string; click_count: number }>(`
+      SELECT id, title, shop, source_url, click_count
+      FROM scraper_products
+      WHERE click_count > 0
+      ORDER BY click_count DESC
+      LIMIT 10
+    `),
+  ]);
+  return {
+    totalClicks: Number(summary?.total_clicks ?? 0),
+    totalProducts: Number(summary?.total_products ?? 0),
+    activeProducts: Number(summary?.active_products ?? 0),
+    topProducts,
+  };
+}
+
 export async function trackProductClick(productId: number): Promise<void> {
   await ensureScraperTables();
   await db.query(

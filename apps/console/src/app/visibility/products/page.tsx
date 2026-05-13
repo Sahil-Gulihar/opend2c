@@ -23,6 +23,11 @@ type Product = {
 const PAGE = 10;
 const FILTERS: FilterValue[] = ["all", "draft", "active", "archived"];
 
+function truncateWords(text: string, n: number) {
+  const words = text.split(/\s+/);
+  return words.length <= n ? text : words.slice(0, n).join(" ") + "…";
+}
+
 export default function ProductsPage() {
   const [products, setProducts]   = useState<Product[]>([]);
   const [total, setTotal]         = useState(0);
@@ -286,7 +291,7 @@ export default function ProductsPage() {
                               : <div className="h-10 w-10 rounded-md bg-gray-100 shrink-0" />
                             }
                             <div className="min-w-0">
-                              <p className="text-sm font-medium text-gray-900 truncate">{product.title}</p>
+                              <p className="text-sm font-medium text-gray-900">{truncateWords(product.title, 6)}</p>
                               <p className="text-xs text-gray-400 truncate">{product.source_url}</p>
                             </div>
                           </div>
