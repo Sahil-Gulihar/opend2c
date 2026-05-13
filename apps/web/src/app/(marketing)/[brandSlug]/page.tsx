@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import type { Metadata } from "next";
+import { withUTM } from "@/lib/utils";
 
 type Brand = {
   id: number;
@@ -135,7 +136,7 @@ export default async function BrandProfilePage({
             {featured.map((product) => (
               <a
                 key={product.id}
-                href={product.source_url}
+                href={withUTM(product.source_url)}
                 target="_blank"
                 rel="noreferrer"
                 className="group bg-white border border-gray-200 rounded-xl overflow-hidden hover:shadow-md transition-shadow"

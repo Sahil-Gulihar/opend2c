@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { Search } from "lucide-react";
+import { withUTM } from "@/lib/utils";
 
 type Product = {
   id: number;
@@ -74,7 +75,7 @@ export default function ProductBrowser({ products }: { products: Product[] }) {
             {filtered.map((p) => (
               <a
                 key={p.id}
-                href={p.source_url}
+                href={withUTM(p.source_url)}
                 target="_blank"
                 rel="noreferrer"
                 onClick={() => trackClick(p.id)}

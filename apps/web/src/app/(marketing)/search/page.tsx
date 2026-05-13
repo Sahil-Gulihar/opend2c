@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { withUTM } from "@/lib/utils";
 
 type Product = {
   id: number;
@@ -67,7 +68,7 @@ export default async function SearchPage({
           {products.map((p) => (
             <a
               key={p.id}
-              href={p.source_url}
+              href={withUTM(p.source_url)}
               target="_blank"
               rel="noreferrer"
               className="rounded-xl bg-white hover:shadow-sm transition-all flex flex-col"
