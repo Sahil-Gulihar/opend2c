@@ -29,13 +29,18 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "Product id is required" }, { status: 400 });
   }
 
-  const input: Record<string, string> = {};
+  const input: Record<string, string | null> = {};
 
   for (const key of ["title", "price", "currency", "notes"] as const) {
     if (key in body) {
       const value = body[key];
       input[key] = typeof value === "string" ? value.trim() : "";
     }
+  }
+
+  if ("image" in body) {
+    const v = body.image;
+    input.image = typeof v === "string" && v.trim() ? v.trim() : null;
   }
 
   if ("status" in body) {
