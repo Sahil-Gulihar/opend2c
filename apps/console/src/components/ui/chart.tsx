@@ -18,6 +18,10 @@ function useChart() {
   return ctx;
 }
 
+function useChartOptional() {
+  return React.useContext(ChartContext);
+}
+
 function ChartContainer({
   config,
   children,
@@ -64,7 +68,8 @@ function ChartTooltipContent({
   formatter?: (value: number, name: string) => [string, string];
   className?: string;
 }) {
-  const { config } = useChart();
+  const ctx = useChartOptional();
+  const config = ctx?.config ?? {};
   if (!active || !payload?.length) return null;
 
   return (
