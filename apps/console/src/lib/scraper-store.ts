@@ -293,7 +293,7 @@ export async function updateProduct(
       SET ${fields.join(", ")}, updated_at=NOW()
       WHERE user_id = $${values.length - 1} AND id = $${values.length}
       RETURNING id, sitemap_id, source_url, title, image, shop, price, currency,
-                status, notes, created_at::text, updated_at::text
+                status, notes, click_count, created_at::text, updated_at::text
     `,
     values,
   );
