@@ -16,6 +16,7 @@ type Product = {
   currency: string | null;
   status: ProductStatus;
   notes: string;
+  click_count: number;
   updated_at: string;
 };
 
@@ -262,6 +263,7 @@ export default function ProductsPage() {
                       <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Product</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Shop</th>
                       <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500">Price</th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500">Clicks</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Status</th>
                     </tr>
                   </thead>
@@ -292,6 +294,9 @@ export default function ProductsPage() {
                         <td className="px-4 py-3 text-xs text-gray-500 cursor-pointer" onClick={() => setSelected(product)}>{product.shop}</td>
                         <td className="px-4 py-3 text-right text-xs tabular-nums text-gray-700 cursor-pointer" onClick={() => setSelected(product)}>
                           {product.price ? `${product.currency ?? ""} ${product.price}`.trim() : "—"}
+                        </td>
+                        <td className="px-4 py-3 text-right text-xs tabular-nums text-gray-500 cursor-pointer" onClick={() => setSelected(product)}>
+                          {product.click_count > 0 ? product.click_count.toLocaleString() : "—"}
                         </td>
                         <td className="px-4 py-3 cursor-pointer" onClick={() => setSelected(product)}>
                           <span className={`rounded-full px-2 py-1 text-xs font-medium capitalize ${

@@ -243,8 +243,18 @@ export default function BrandPage() {
             </div>
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-sm text-gray-400">
-            Select a brand to edit, or create a new one.
+          <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center px-8">
+            <p className="text-sm text-gray-400">
+              {brands.length === 0 ? "You don't have any brands yet." : "Select a brand to edit."}
+            </p>
+            {brands.length === 0 && (
+              <button
+                onClick={() => { setCreating(true); setSelected(null); setTab("edit"); }}
+                className="px-4 py-2 text-sm font-medium bg-gray-900 text-white rounded-md hover:bg-gray-700"
+              >
+                Create your first brand
+              </button>
+            )}
           </div>
         )}
       </div>

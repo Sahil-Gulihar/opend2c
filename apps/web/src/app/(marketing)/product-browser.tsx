@@ -27,6 +27,14 @@ export default function ProductBrowser({ products }: { products: Product[] }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const shuffled = useMemo(() => shuffle(products), []);
 
+  function trackClick(id: number) {
+    fetch("/api/track-click", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    }).catch(() => {});
+  }
+
   const filtered = shuffled.filter((p) => {
     const q = query.toLowerCase();
     return (
@@ -69,6 +77,7 @@ export default function ProductBrowser({ products }: { products: Product[] }) {
                 href={p.source_url}
                 target="_blank"
                 rel="noreferrer"
+                onClick={() => trackClick(p.id)}
                 className="rounded-xl bg-white hover:shadow-sm transition-all flex flex-col"
               >
                 <div className="p-3 pb-0">

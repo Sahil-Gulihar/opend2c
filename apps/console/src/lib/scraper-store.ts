@@ -24,6 +24,7 @@ export type SavedProduct = {
   currency: string | null;
   status: "draft" | "active" | "archived";
   notes: string;
+  click_count: number;
   created_at: string;
   updated_at: string;
 };
@@ -99,6 +100,10 @@ export async function ensureScraperTables() {
   await db.query(`
     ALTER TABLE scraper_sitemaps ADD COLUMN IF NOT EXISTS progress_scraped INT NOT NULL DEFAULT 0;
     ALTER TABLE scraper_sitemaps ADD COLUMN IF NOT EXISTS progress_total INT NOT NULL DEFAULT 0;
+  `).catch(() => {});
+
+  await db.query(`
+    ALTER TABLE scraper_products ADD COLUMN IF NOT EXISTS click_count INT NOT NULL DEFAULT 0;
   `).catch(() => {});
 
   initialized = true;
@@ -254,7 +259,7 @@ export async function listProducts(
     db.query<{ count: string }>(`SELECT COUNT(*)::text AS count FROM scraper_products WHERE ${where}`, values),
     db.query<SavedProduct>(
       `SELECT id, sitemap_id, source_url, title, image, shop, price, currency,
-              status, notes, created_at::text, updated_at::text
+              status, notes, click_count, created_at::text, updated_at::text
        FROM scraper_products
        WHERE ${where}
        ORDER BY updated_at DESC, id DESC
@@ -480,6 +485,15 @@ export async function getAllActiveProducts(): Promise<SavedProduct[]> {
 
 export function invalidateProductCache() {
   productCache = null;
+}
+
+export async function trackProductClick(productId: number): Promise<void> {
+  await ensureScraperTables();
+  await db.query(
+    `UPDATE scraper_products SET click_count = click_count + 1 WHERE id = $1`,
+    [productId],
+  );
+  invalidateProductCache();
 }
 
 // Called by the crawler worker after a job completes.
