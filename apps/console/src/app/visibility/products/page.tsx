@@ -28,6 +28,22 @@ function truncateWords(text: string, n: number) {
   return words.length <= n ? text : words.slice(0, n).join(" ") + "…";
 }
 
+type Issue = "no_image" | "no_price" | "broken_image";
+
+function getIssues(p: Product, brokenIds: Set<number>): Issue[] {
+  const issues: Issue[] = [];
+  if (!p.image) issues.push("no_image");
+  else if (brokenIds.has(p.id)) issues.push("broken_image");
+  if (!p.price || p.price.trim() === "") issues.push("no_price");
+  return issues;
+}
+
+const ISSUE_LABELS: Record<Issue, { label: string; color: string }> = {
+  no_image:     { label: "No image",     color: "bg-amber-100 text-amber-700" },
+  broken_image: { label: "Broken image", color: "bg-red-100 text-red-600"     },
+  no_price:     { label: "No price",     color: "bg-orange-100 text-orange-700" },
+};
+
 function ImageThumb({ product, broken, onBroken }: {
   product: Product;
   broken: boolean;
@@ -171,6 +187,16 @@ function ImageEditor({ product, broken, onSaved, onDeleted }: {
   );
 }
 
+function checkImageUrl(url: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const img = new window.Image();
+    const timer = setTimeout(() => { resolve(false); }, 8000);
+    img.onload  = () => { clearTimeout(timer); resolve(true);  };
+    img.onerror = () => { clearTimeout(timer); resolve(false); };
+    img.src = url;
+  });
+}
+
 export default function ProductsPage() {
   const [products, setProducts]       = useState<Product[]>([]);
   const [total, setTotal]             = useState(0);
@@ -179,9 +205,12 @@ export default function ProductsPage() {
   const [selected, setSelected]       = useState<Product | null>(null);
   const [checked, setChecked]         = useState<Set<number>>(new Set());
   const [brokenIds, setBrokenIds]     = useState<Set<number>>(new Set());
+  const [scanning, setScanning]       = useState(false);
+  const [scanProgress, setScanProgress] = useState({ checked: 0, total: 0 });
   const [query, setQuery]             = useState("");
   const [filter, setFilter]           = useState<FilterValue>("all");
   const [showBroken, setShowBroken]   = useState(false);
+  const [showIssues, setShowIssues]   = useState(false);
   const [editTab, setEditTab]         = useState<"details" | "image">("details");
   const [loading, setLoading]         = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -197,6 +226,41 @@ export default function ProductsPage() {
   const markBroken = useCallback((id: number) => {
     setBrokenIds((prev) => prev.has(id) ? prev : new Set([...prev, id]));
   }, []);
+
+  async function scanAllImages() {
+    if (scanning) return;
+    setScanning(true);
+    setBrokenIds(new Set());
+    setScanProgress({ checked: 0, total: 0 });
+
+    // Fetch all products across all pages
+    const withImages: { id: number; image: string }[] = [];
+    let off = 0;
+    while (true) {
+      const res = await fetch(`/api/scraper/products?limit=100&offset=${off}&status=all`, { cache: "no-store" });
+      if (!res.ok) break;
+      const data: { products: Product[]; hasMore: boolean } = await res.json();
+      for (const p of data.products) {
+        if (p.image) withImages.push({ id: p.id, image: p.image });
+      }
+      off += data.products.length;
+      if (!data.hasMore) break;
+    }
+
+    setScanProgress({ checked: 0, total: withImages.length });
+
+    // Check each image, updating progress and broken set incrementally
+    await Promise.all(
+      withImages.map(async ({ id, image }) => {
+        const ok = await checkImageUrl(image);
+        setScanProgress((p) => ({ ...p, checked: p.checked + 1 }));
+        if (!ok) setBrokenIds((prev) => new Set([...prev, id]));
+      }),
+    );
+
+    setScanning(false);
+    setShowBroken(true);
+  }
 
   const fetchPage = useCallback(async (off: number, q: string, f: FilterValue, append: boolean) => {
     const params = new URLSearchParams({
@@ -248,9 +312,13 @@ export default function ProductsPage() {
     queryTimerRef.current = setTimeout(() => setQuery(v), 300);
   }
 
-  const visibleProducts = showBroken
-    ? products.filter((p) => brokenIds.has(p.id))
-    : products;
+  const productsWithIssues = products.filter((p) => getIssues(p, brokenIds).length > 0);
+
+  const visibleProducts = showIssues
+    ? productsWithIssues
+    : showBroken
+      ? products.filter((p) => brokenIds.has(p.id))
+      : products;
 
   const allPageChecked = visibleProducts.length > 0 && visibleProducts.every((p) => checked.has(p.id));
   const someChecked    = checked.size > 0;
@@ -375,32 +443,69 @@ export default function ProductsPage() {
             {FILTERS.map((f) => (
               <button
                 key={f}
-                onClick={() => { setFilter(f); setShowBroken(false); }}
+                onClick={() => { setFilter(f); setShowBroken(false); setShowIssues(false); }}
                 className={`px-3 py-1.5 rounded-md text-xs font-medium capitalize ${
-                  filter === f && !showBroken ? "bg-gray-900 text-white" : "bg-white border border-gray-200 text-gray-600 hover:bg-gray-50"
+                  filter === f && !showBroken && !showIssues ? "bg-gray-900 text-white" : "bg-white border border-gray-200 text-gray-600 hover:bg-gray-50"
                 }`}
               >
                 {f}
               </button>
             ))}
             <button
-              onClick={() => setShowBroken((v) => !v)}
+              onClick={() => { setShowIssues((v) => !v); setShowBroken(false); }}
               className={`px-3 py-1.5 rounded-md text-xs font-medium flex items-center gap-1.5 ${
-                showBroken
-                  ? "bg-red-600 text-white"
-                  : brokenIds.size > 0
-                    ? "bg-white border border-red-300 text-red-600 hover:bg-red-50"
+                showIssues
+                  ? "bg-orange-500 text-white"
+                  : productsWithIssues.length > 0
+                    ? "bg-white border border-orange-300 text-orange-600 hover:bg-orange-50"
                     : "bg-white border border-gray-200 text-gray-400 hover:bg-gray-50"
               }`}
             >
-              <span>⚠</span>
-              Broken images
-              {brokenIds.size > 0 && (
+              Issues
+              {productsWithIssues.length > 0 && (
                 <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
-                  showBroken ? "bg-white/20" : "bg-red-100 text-red-600"
+                  showIssues ? "bg-white/20 text-white" : "bg-orange-100 text-orange-600"
                 }`}>
-                  {brokenIds.size}
+                  {productsWithIssues.length}
                 </span>
+              )}
+            </button>
+
+            <button
+              onClick={scanning ? undefined : showBroken ? () => setShowBroken(false) : scanAllImages}
+              disabled={scanning}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium flex items-center gap-1.5 transition-colors disabled:cursor-wait ${
+                showBroken
+                  ? "bg-red-600 text-white"
+                  : scanning
+                    ? "bg-white border border-gray-200 text-gray-500"
+                    : brokenIds.size > 0
+                      ? "bg-white border border-red-300 text-red-600 hover:bg-red-50"
+                      : "bg-white border border-gray-200 text-gray-500 hover:bg-gray-50"
+              }`}
+            >
+              {scanning ? (
+                <>
+                  <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                  </svg>
+                  {scanProgress.total > 0
+                    ? `${scanProgress.checked}/${scanProgress.total}`
+                    : "Fetching…"}
+                </>
+              ) : (
+                <>
+                  <span>⚠</span>
+                  {showBroken ? "Hide broken" : "Scan images"}
+                  {brokenIds.size > 0 && (
+                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${
+                      showBroken ? "bg-white/20 text-white" : "bg-red-100 text-red-600"
+                    }`}>
+                      {brokenIds.size}
+                    </span>
+                  )}
+                </>
               )}
             </button>
           </div>
@@ -431,9 +536,9 @@ export default function ProductsPage() {
           )}
         </div>
 
-        {showBroken && brokenIds.size === 0 && !loading && (
-          <div className="mb-3 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-md text-xs text-amber-700">
-            No broken images detected yet. Scroll through products to scan them.
+        {showBroken && brokenIds.size === 0 && !scanning && (
+          <div className="mb-3 px-4 py-2.5 bg-emerald-50 border border-emerald-200 rounded-md text-xs text-emerald-700">
+            All images loaded successfully — no broken URLs found.
           </div>
         )}
 
@@ -443,7 +548,7 @@ export default function ProductsPage() {
               <div className="px-5 py-10 text-center text-sm text-gray-400">Loading products…</div>
             ) : visibleProducts.length === 0 ? (
               <div className="px-5 py-10 text-center text-sm text-gray-400">
-                {showBroken ? "No broken images detected in loaded products." : "No products found. Add a sitemap in Sitemaps first."}
+                {showIssues ? "No issues found in loaded products." : showBroken ? "No broken images detected in loaded products." : "No products found. Add a sitemap in Sitemaps first."}
               </div>
             ) : (
               <>
@@ -459,11 +564,13 @@ export default function ProductsPage() {
                       <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500">Price</th>
                       <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500">Clicks</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Status</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Issues</th>
                     </tr>
                   </thead>
                   <tbody>
                     {visibleProducts.map((product) => {
                       const isBroken = brokenIds.has(product.id);
+                      const issues   = getIssues(product, brokenIds);
                       return (
                         <tr
                           key={product.id}
@@ -500,6 +607,15 @@ export default function ProductsPage() {
                               {product.status}
                             </span>
                           </td>
+                          <td className="px-4 py-3 cursor-pointer" onClick={() => setSelected(product)}>
+                            <div className="flex flex-wrap gap-1">
+                              {issues.map((issue) => (
+                                <span key={issue} className={`rounded-full px-2 py-0.5 text-[10px] font-medium whitespace-nowrap ${ISSUE_LABELS[issue].color}`}>
+                                  {ISSUE_LABELS[issue].label}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
                         </tr>
                       );
                     })}
@@ -529,6 +645,18 @@ export default function ProductsPage() {
                 <div className="min-w-0">
                   <h2 className="text-sm font-semibold text-gray-900 truncate">{truncateWords(selected.title, 6)}</h2>
                   <p className="mt-0.5 text-xs text-gray-400 truncate">{selected.source_url}</p>
+                  {(() => {
+                    const issues = getIssues(selected, brokenIds);
+                    return issues.length > 0 ? (
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {issues.map((issue) => (
+                          <span key={issue} className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${ISSUE_LABELS[issue].color}`}>
+                            {ISSUE_LABELS[issue].label}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null;
+                  })()}
                 </div>
                 <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600 shrink-0 ml-2 mt-0.5 text-lg leading-none">×</button>
               </div>

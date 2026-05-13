@@ -96,6 +96,45 @@ func fetchSitemap(targetURL string) ([]byte, error) {
 	return fetchWithDelay(targetURL, 300, 700)
 }
 
+// validateImageURL does a HEAD request (falls back to a 1-byte GET if the
+// server returns 405) and returns true only when the image is reachable.
+func validateImageURL(rawURL string) bool {
+	if rawURL == "" {
+		return false
+	}
+	client := &http.Client{Timeout: 6 * time.Second}
+
+	check := func(method string) (int, error) {
+		req, err := http.NewRequest(method, rawURL, nil)
+		if err != nil {
+			return 0, err
+		}
+		req.Header.Set("User-Agent", userAgents[rand.Intn(len(userAgents))])
+		if method == "GET" {
+			req.Header.Set("Range", "bytes=0-0")
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return 0, err
+		}
+		resp.Body.Close()
+		return resp.StatusCode, nil
+	}
+
+	status, err := check("HEAD")
+	if err != nil {
+		return false
+	}
+	if status == 405 {
+		// Server doesn't support HEAD — try a tiny GET instead
+		status, err = check("GET")
+		if err != nil {
+			return false
+		}
+	}
+	return status == 200 || status == 206 || status == 301 || status == 302
+}
+
 func fetch(targetURL string) ([]byte, error) {
 	return fetchWithDelay(targetURL, 900, 2200)
 }

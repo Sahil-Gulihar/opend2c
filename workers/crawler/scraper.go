@@ -152,6 +152,11 @@ func scrapeProduct(entry URLEntry, shopName string) (*Product, error) {
 		return nil, fmt.Errorf("no priced variants")
 	}
 
+	// Validate the image URL — clear it rather than store a broken link.
+	if image != "" && !validateImageURL(image) {
+		image = ""
+	}
+
 	return &Product{Name: name, Image: image, Shop: shopName, Variants: valid}, nil
 }
 
