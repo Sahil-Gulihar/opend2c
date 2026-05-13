@@ -8,7 +8,10 @@ type Brand = {
   name: string;
   description: string;
   logo_url: string | null;
+  banner_url: string | null;
   website_url: string | null;
+  twitter_url: string | null;
+  instagram_url: string | null;
 };
 
 function slugify(s: string) {
@@ -24,13 +27,17 @@ function BrandForm({
   onSaved: (b: Brand) => void;
   onCancel?: () => void;
 }) {
-  const [name, setName]           = useState(brand?.name ?? "");
-  const [slug, setSlug]           = useState(brand?.slug ?? "");
-  const [description, setDesc]    = useState(brand?.description ?? "");
-  const [websiteUrl, setWebsite]  = useState(brand?.website_url ?? "");
+  const [name, setName]             = useState(brand?.name ?? "");
+  const [slug, setSlug]             = useState(brand?.slug ?? "");
+  const [description, setDesc]      = useState(brand?.description ?? "");
+  const [logoUrl, setLogo]          = useState(brand?.logo_url ?? "");
+  const [bannerUrl, setBanner]      = useState(brand?.banner_url ?? "");
+  const [websiteUrl, setWebsite]    = useState(brand?.website_url ?? "");
+  const [twitterUrl, setTwitter]    = useState(brand?.twitter_url ?? "");
+  const [instagramUrl, setInstagram] = useState(brand?.instagram_url ?? "");
   const [slugEdited, setSlugEdited] = useState(!!brand);
-  const [saving, setSaving]       = useState(false);
-  const [error, setError]         = useState("");
+  const [saving, setSaving]         = useState(false);
+  const [error, setError]           = useState("");
 
   function onNameChange(v: string) {
     setName(v);
@@ -41,7 +48,16 @@ function BrandForm({
     e.preventDefault();
     setSaving(true);
     setError("");
-    const payload = { name: name.trim(), slug: slug.trim(), description: description.trim(), website_url: websiteUrl.trim() || null };
+    const payload = {
+      name: name.trim(),
+      slug: slug.trim(),
+      description: description.trim(),
+      logo_url: logoUrl.trim() || null,
+      banner_url: bannerUrl.trim() || null,
+      website_url: websiteUrl.trim() || null,
+      twitter_url: twitterUrl.trim() || null,
+      instagram_url: instagramUrl.trim() || null,
+    };
     const res = brand
       ? await fetch(`/api/brands/${brand.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
       : await fetch("/api/brands", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
@@ -50,29 +66,57 @@ function BrandForm({
     onSaved(await res.json());
   }
 
+  const inputCls = "w-full px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-gray-400";
+
   return (
     <form onSubmit={save} className="space-y-4">
       <div>
         <label className="block text-xs font-medium text-gray-700 mb-1.5">Brand name <span className="text-red-500">*</span></label>
-        <input type="text" required value={name} onChange={(e) => onNameChange(e.target.value)} placeholder="My Store"
-          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-gray-400" />
+        <input type="text" required value={name} onChange={(e) => onNameChange(e.target.value)} placeholder="My Store" className={inputCls} />
       </div>
       <div>
         <label className="block text-xs font-medium text-gray-700 mb-1.5">URL slug <span className="text-red-500">*</span></label>
-        <input type="text" required value={slug} onChange={(e) => { setSlug(slugify(e.target.value)); setSlugEdited(true); }}
-          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-gray-400 font-mono" />
+        <input type="text" required value={slug} onChange={(e) => { setSlug(slugify(e.target.value)); setSlugEdited(true); }} className={`${inputCls} font-mono`} />
         <p className="mt-1 text-xs text-gray-400">opend2c.com/{slug || "your-brand"}</p>
       </div>
       <div>
-        <label className="block text-xs font-medium text-gray-700 mb-1.5">Website</label>
-        <input type="text" value={websiteUrl} onChange={(e) => setWebsite(e.target.value)} placeholder="https://yourstore.com"
-          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-gray-400" />
+        <label className="block text-xs font-medium text-gray-700 mb-1.5">Bio</label>
+        <textarea rows={3} value={description} onChange={(e) => setDesc(e.target.value)} placeholder="Tell customers about your brand…"
+          className={`${inputCls} resize-none`} />
+      </div>
+
+      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide pt-1">Visuals</p>
+
+      <div>
+        <label className="block text-xs font-medium text-gray-700 mb-1.5">Logo URL</label>
+        <input type="text" value={logoUrl} onChange={(e) => setLogo(e.target.value)} placeholder="https://…/logo.png" className={inputCls} />
+        {logoUrl && (
+          <img src={logoUrl} alt="" className="mt-2 h-12 w-12 rounded-lg object-contain border border-gray-100 bg-gray-50" onError={(e) => (e.currentTarget.style.display = "none")} />
+        )}
       </div>
       <div>
-        <label className="block text-xs font-medium text-gray-700 mb-1.5">Description</label>
-        <textarea rows={3} value={description} onChange={(e) => setDesc(e.target.value)}
-          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-gray-400 resize-none" />
+        <label className="block text-xs font-medium text-gray-700 mb-1.5">Banner URL</label>
+        <input type="text" value={bannerUrl} onChange={(e) => setBanner(e.target.value)} placeholder="https://…/banner.jpg" className={inputCls} />
+        {bannerUrl && (
+          <img src={bannerUrl} alt="" className="mt-2 w-full h-24 rounded-lg object-cover border border-gray-100 bg-gray-50" onError={(e) => (e.currentTarget.style.display = "none")} />
+        )}
       </div>
+
+      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide pt-1">Links</p>
+
+      <div>
+        <label className="block text-xs font-medium text-gray-700 mb-1.5">Website</label>
+        <input type="text" value={websiteUrl} onChange={(e) => setWebsite(e.target.value)} placeholder="https://yourstore.com" className={inputCls} />
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-gray-700 mb-1.5">Twitter / X</label>
+        <input type="text" value={twitterUrl} onChange={(e) => setTwitter(e.target.value)} placeholder="https://twitter.com/yourbrand" className={inputCls} />
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-gray-700 mb-1.5">Instagram</label>
+        <input type="text" value={instagramUrl} onChange={(e) => setInstagram(e.target.value)} placeholder="https://instagram.com/yourbrand" className={inputCls} />
+      </div>
+
       {error && <p className="text-xs text-red-500">{error}</p>}
       <div className="flex items-center justify-end gap-2 pt-1">
         {onCancel && (

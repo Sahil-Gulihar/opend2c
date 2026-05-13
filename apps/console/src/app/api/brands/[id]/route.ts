@@ -27,8 +27,9 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
   if (typeof body?.name === "string") input.name = body.name.trim();
   if (typeof body?.slug === "string") input.slug = slugify(body.slug);
   if (typeof body?.description === "string") input.description = body.description.trim();
-  if ("logo_url" in body) input.logo_url = typeof body.logo_url === "string" ? body.logo_url.trim() || null : null;
-  if ("website_url" in body) input.website_url = typeof body.website_url === "string" ? body.website_url.trim() || null : null;
+  for (const key of ["logo_url", "banner_url", "website_url", "twitter_url", "instagram_url"] as const) {
+    if (key in body) input[key] = typeof body[key] === "string" ? body[key].trim() || null : null;
+  }
 
   try {
     const brand = await updateBrand(session.user.id, Number(id), input);

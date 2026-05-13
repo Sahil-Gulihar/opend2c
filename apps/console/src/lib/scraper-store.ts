@@ -36,7 +36,10 @@ export type Brand = {
   name: string;
   description: string;
   logo_url: string | null;
+  banner_url: string | null;
   website_url: string | null;
+  twitter_url: string | null;
+  instagram_url: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -104,6 +107,12 @@ export async function ensureScraperTables() {
 
   await db.query(`
     ALTER TABLE scraper_products ADD COLUMN IF NOT EXISTS click_count INT NOT NULL DEFAULT 0;
+  `).catch(() => {});
+
+  await db.query(`
+    ALTER TABLE brands ADD COLUMN IF NOT EXISTS banner_url TEXT;
+    ALTER TABLE brands ADD COLUMN IF NOT EXISTS twitter_url TEXT;
+    ALTER TABLE brands ADD COLUMN IF NOT EXISTS instagram_url TEXT;
   `).catch(() => {});
 
   await db.query(`
@@ -330,7 +339,7 @@ export async function deleteProducts(userId: string, ids: number[]): Promise<voi
 export async function getBrandByUserId(userId: string): Promise<Brand | null> {
   await ensureScraperTables();
   const { rows } = await db.query<Brand>(
-    `SELECT id, user_id, slug, name, description, logo_url, website_url,
+    `SELECT id, user_id, slug, name, description, logo_url, banner_url, website_url, twitter_url, instagram_url,
             created_at::text, updated_at::text
      FROM brands WHERE user_id = $1 LIMIT 1`,
     [userId],
@@ -341,7 +350,7 @@ export async function getBrandByUserId(userId: string): Promise<Brand | null> {
 export async function listBrandsByUserId(userId: string): Promise<Brand[]> {
   await ensureScraperTables();
   const { rows } = await db.query<Brand>(
-    `SELECT id, user_id, slug, name, description, logo_url, website_url,
+    `SELECT id, user_id, slug, name, description, logo_url, banner_url, website_url, twitter_url, instagram_url,
             created_at::text, updated_at::text
      FROM brands WHERE user_id = $1 ORDER BY created_at ASC`,
     [userId],
@@ -352,7 +361,7 @@ export async function listBrandsByUserId(userId: string): Promise<Brand[]> {
 export async function getBrandById(userId: string, id: number): Promise<Brand | null> {
   await ensureScraperTables();
   const { rows } = await db.query<Brand>(
-    `SELECT id, user_id, slug, name, description, logo_url, website_url,
+    `SELECT id, user_id, slug, name, description, logo_url, banner_url, website_url, twitter_url, instagram_url,
             created_at::text, updated_at::text
      FROM brands WHERE user_id = $1 AND id = $2`,
     [userId, id],
@@ -362,15 +371,15 @@ export async function getBrandById(userId: string, id: number): Promise<Brand | 
 
 export async function createBrand(
   userId: string,
-  input: Pick<Brand, "slug" | "name" | "description" | "logo_url" | "website_url">,
+  input: Pick<Brand, "slug" | "name" | "description" | "logo_url" | "banner_url" | "website_url" | "twitter_url" | "instagram_url">,
 ): Promise<Brand> {
   await ensureScraperTables();
   const { rows } = await db.query<Brand>(
-    `INSERT INTO brands (user_id, slug, name, description, logo_url, website_url)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id, user_id, slug, name, description, logo_url, website_url,
+    `INSERT INTO brands (user_id, slug, name, description, logo_url, banner_url, website_url, twitter_url, instagram_url)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     RETURNING id, user_id, slug, name, description, logo_url, banner_url, website_url, twitter_url, instagram_url,
                created_at::text, updated_at::text`,
-    [userId, input.slug, input.name, input.description, input.logo_url, input.website_url],
+    [userId, input.slug, input.name, input.description, input.logo_url, input.banner_url, input.website_url, input.twitter_url, input.instagram_url],
   );
   return rows[0];
 }
@@ -378,7 +387,7 @@ export async function createBrand(
 export async function updateBrand(
   userId: string,
   id: number,
-  input: Partial<Pick<Brand, "slug" | "name" | "description" | "logo_url" | "website_url">>,
+  input: Partial<Pick<Brand, "slug" | "name" | "description" | "logo_url" | "banner_url" | "website_url" | "twitter_url" | "instagram_url">>,
 ): Promise<Brand | null> {
   await ensureScraperTables();
   const fields: string[] = [];
@@ -392,7 +401,7 @@ export async function updateBrand(
   const { rows } = await db.query<Brand>(
     `UPDATE brands SET ${fields.join(", ")}, updated_at=NOW()
      WHERE user_id=$${values.length - 1} AND id=$${values.length}
-     RETURNING id, user_id, slug, name, description, logo_url, website_url,
+     RETURNING id, user_id, slug, name, description, logo_url, banner_url, website_url, twitter_url, instagram_url,
                created_at::text, updated_at::text`,
     values,
   );
@@ -426,7 +435,7 @@ export async function transferBrand(
 export async function getBrandBySlug(slug: string): Promise<Brand | null> {
   await ensureScraperTables();
   const { rows } = await db.query<Brand>(
-    `SELECT id, user_id, slug, name, description, logo_url, website_url,
+    `SELECT id, user_id, slug, name, description, logo_url, banner_url, website_url, twitter_url, instagram_url,
             created_at::text, updated_at::text
      FROM brands WHERE slug = $1`,
     [slug],
@@ -461,7 +470,7 @@ export async function upsertBrand(
 export async function listAllBrands(): Promise<(Brand & { product_count: number })[]> {
   await ensureScraperTables();
   const { rows } = await db.query<Brand & { product_count: number }>(
-    `SELECT b.id, b.slug, b.name, b.description, b.logo_url, b.website_url,
+    `SELECT b.id, b.slug, b.name, b.description, b.logo_url, b.banner_url, b.website_url, b.twitter_url, b.instagram_url,
             b.created_at::text, b.updated_at::text,
             COUNT(p.id)::int AS product_count
      FROM brands b

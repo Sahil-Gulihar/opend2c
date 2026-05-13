@@ -31,7 +31,10 @@ export async function POST(req: NextRequest) {
       name,
       description: typeof body?.description === "string" ? body.description.trim() : "",
       logo_url: typeof body?.logo_url === "string" ? body.logo_url.trim() || null : null,
+      banner_url: typeof body?.banner_url === "string" ? body.banner_url.trim() || null : null,
       website_url: typeof body?.website_url === "string" ? body.website_url.trim() || null : null,
+      twitter_url: typeof body?.twitter_url === "string" ? body.twitter_url.trim() || null : null,
+      instagram_url: typeof body?.instagram_url === "string" ? body.instagram_url.trim() || null : null,
     });
     return NextResponse.json(brand, { status: 201 });
   } catch (err: unknown) {
