@@ -423,8 +423,7 @@ export default function BrandEditPage() {
   const [brand, setBrand]     = useState<Brand | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
-  const [tab, setTab]         = useState<"edit" | "transfer">("edit");
-  const [deleting, setDeleting] = useState(false);
+  const [tab, setTab] = useState<"edit" | "transfer">("edit");
 
   useEffect(() => {
     fetch("/api/brands")
@@ -436,14 +435,6 @@ export default function BrandEditPage() {
       })
       .catch(() => setLoading(false));
   }, [brandSlug]);
-
-  async function handleDelete() {
-    if (!brand) return;
-    if (!window.confirm(`Delete "${brand.name}"? This cannot be undone.`)) return;
-    setDeleting(true);
-    await fetch(`/api/brands/${brand.id}`, { method: "DELETE" });
-    router.push("/");
-  }
 
   if (loading) {
     return <div className="px-8 py-10 text-sm text-gray-400">Loading…</div>;
@@ -458,20 +449,11 @@ export default function BrandEditPage() {
   }
 
   return (
-    <div className="px-8 py-6 max-w-4xl">
+    <div className="px-8 py-6">
       {/* Page header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-lg font-semibold text-gray-900">{brand.name}</h1>
-          <p className="text-xs text-gray-400 font-mono mt-0.5">opend2c.com/{brand.slug}</p>
-        </div>
-        <button
-          onClick={handleDelete}
-          disabled={deleting}
-          className="text-xs text-red-500 hover:text-red-700 disabled:opacity-50"
-        >
-          {deleting ? "Deleting…" : "Delete brand"}
-        </button>
+      <div className="mb-6">
+        <h1 className="text-lg font-semibold text-gray-900">{brand.name}</h1>
+        <p className="text-xs text-gray-400 font-mono mt-0.5">opend2c.com/{brand.slug}</p>
       </div>
 
       {/* Tabs */}
