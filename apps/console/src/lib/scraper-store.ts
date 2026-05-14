@@ -1,5 +1,23 @@
 import { db } from "@/lib/db";
 
+// A product has an issue when it is missing an image, missing a price, or has a
+// zero-value price (e.g. "0", "0.00", "INR 0", "₹0").
+// Keep the SQL fragment and JS predicate in sync.
+export const ISSUE_SQL = `(
+  image IS NULL
+  OR price IS NULL
+  OR TRIM(price) = ''
+  OR TRIM(price) ~ '^[A-Z₹$€£¥\s]*0+(\.0+)?$'
+)`;
+
+export function productHasIssue(price: string | null | undefined, image: string | null | undefined): boolean {
+  if (!image) return true;
+  if (!price || price.trim() === "") return true;
+  // Strip currency symbols / codes and check if the numeric part is zero
+  const numeric = price.trim().replace(/^[A-Z₹$€£¥\s]+/i, "").trim();
+  return /^0+(\.0+)?$/.test(numeric);
+}
+
 export type SavedSitemap = {
   id: number;
   user_id: string;
@@ -308,7 +326,7 @@ export async function listProducts(
   }
 
   if (opts.hasIssues) {
-    conditions.push(`(image IS NULL OR price IS NULL OR TRIM(price) = '')`);
+    conditions.push(ISSUE_SQL);
   }
 
   const where = conditions.join(" AND ");
@@ -659,7 +677,7 @@ export async function getProductIssuesSummary(userId: string): Promise<ProductIs
      FROM scraper_products
      WHERE user_id = $1
        AND status != 'archived'
-       AND (image IS NULL OR price IS NULL OR price = '')
+       AND ${ISSUE_SQL}
      ORDER BY updated_at DESC
      LIMIT 50`,
     [userId],
@@ -668,15 +686,15 @@ export async function getProductIssuesSummary(userId: string): Promise<ProductIs
   const products: IssueProduct[] = rows.map((r) => ({
     ...r,
     issues: [
-      ...(!r.image           ? ["No image"]  : []),
-      ...(!r.price || r.price === "" ? ["No price"]  : []),
+      ...(!r.image ? ["No image"] : []),
+      ...(productHasIssue(r.price, r.image) && r.image ? ["Zero or missing price"] : []),
     ],
   }));
 
   return {
     total:   products.length,
     noImage: rows.filter((r) => !r.image).length,
-    noPrice: rows.filter((r) => !r.price || r.price === "").length,
+    noPrice: rows.filter((r) => productHasIssue(r.price, r.image)).length,
     products,
   };
 }
@@ -727,7 +745,7 @@ export async function syncCrawlerProducts(
   }
 
   for (const p of products) {
-    const hasIssues = !p.image || !p.price;
+    const hasIssues = productHasIssue(p.price, p.image);
     const status = hasIssues ? "draft" : "active";
     await db.query(
       `INSERT INTO scraper_products
