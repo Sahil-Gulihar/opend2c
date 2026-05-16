@@ -544,8 +544,8 @@ export async function listAllBrands(): Promise<(Brand & { product_count: number 
             b.created_at::text, b.updated_at::text,
             COUNT(p.id)::int AS product_count
      FROM brands b
-     LEFT JOIN scraper_products p
-       ON p.user_id = b.user_id AND p.status = 'active'
+     LEFT JOIN scraper_sitemaps s ON s.brand_id = b.id
+     LEFT JOIN scraper_products p ON p.sitemap_id = s.id AND p.status = 'active'
      GROUP BY b.id
      ORDER BY b.name ASC`,
   );
