@@ -148,6 +148,11 @@ export async function ensureScraperTables() {
   `).catch(() => {});
 
   await db.query(`
+    ALTER TABLE scraper_sitemaps ADD COLUMN IF NOT EXISTS brand_id BIGINT REFERENCES brands(id) ON DELETE CASCADE;
+    CREATE INDEX IF NOT EXISTS idx_scraper_sitemaps_brand_id ON scraper_sitemaps(brand_id);
+  `).catch(() => {});
+
+  await db.query(`
     ALTER TABLE brands ADD COLUMN IF NOT EXISTS banner_url TEXT;
     ALTER TABLE brands ADD COLUMN IF NOT EXISTS twitter_url TEXT;
     ALTER TABLE brands ADD COLUMN IF NOT EXISTS instagram_url TEXT;
@@ -181,7 +186,7 @@ export async function ensureScraperTables() {
   initialized = true;
 }
 
-export async function listSitemaps(userId: string): Promise<SavedSitemap[]> {
+export async function listSitemaps(userId: string, brandId: number): Promise<SavedSitemap[]> {
   await ensureScraperTables();
   const { rows } = await db.query<SavedSitemap>(
     `
@@ -190,11 +195,11 @@ export async function listSitemaps(userId: string): Promise<SavedSitemap[]> {
              s.error, s.created_at::text, s.updated_at::text
       FROM scraper_sitemaps s
       LEFT JOIN scraper_products p ON p.sitemap_id = s.id
-      WHERE s.user_id = $1
+      WHERE s.user_id = $1 AND s.brand_id = $2
       GROUP BY s.id
       ORDER BY s.created_at DESC
     `,
-    [userId],
+    [userId, brandId],
   );
   return rows;
 }
@@ -216,11 +221,11 @@ export async function getSitemap(id: number): Promise<SavedSitemap | null> {
   return rows[0] ?? null;
 }
 
-export async function createSitemap(userId: string, url: string) {
+export async function createSitemap(userId: string, brandId: number, url: string) {
   await ensureScraperTables();
   const { rows } = await db.query<{ id: number }>(
-    `INSERT INTO scraper_sitemaps (user_id, url, status) VALUES ($1, $2, 'running') RETURNING id`,
-    [userId, url],
+    `INSERT INTO scraper_sitemaps (user_id, brand_id, url, status) VALUES ($1, $2, $3, 'running') RETURNING id`,
+    [userId, brandId, url],
   );
   return rows[0].id;
 }
@@ -307,38 +312,39 @@ export async function upsertProducts(
 
 export async function listProducts(
   userId: string,
-  opts: { limit: number; offset: number; status?: string; q?: string; hasIssues?: boolean } = { limit: 10, offset: 0 },
+  opts: { brandId: number; limit: number; offset: number; status?: string; q?: string; hasIssues?: boolean },
 ): Promise<{ products: SavedProduct[]; total: number }> {
   await ensureScraperTables();
 
-  const conditions: string[] = ["user_id = $1"];
-  const values: unknown[]   = [userId];
+  const conditions: string[] = ["p.user_id = $1", "s.brand_id = $2"];
+  const values: unknown[]   = [userId, opts.brandId];
 
   if (opts.status && opts.status !== "all") {
     values.push(opts.status);
-    conditions.push(`status = $${values.length}`);
+    conditions.push(`p.status = $${values.length}`);
   }
 
   if (opts.q) {
     values.push(`%${opts.q.toLowerCase()}%`);
     const idx = values.length;
-    conditions.push(`(LOWER(title) LIKE $${idx} OR LOWER(shop) LIKE $${idx})`);
+    conditions.push(`(LOWER(p.title) LIKE $${idx} OR LOWER(p.shop) LIKE $${idx})`);
   }
 
   if (opts.hasIssues) {
-    conditions.push(ISSUE_SQL);
+    conditions.push(ISSUE_SQL.replace(/\b(image|price)\b/g, "p.$1"));
   }
 
   const where = conditions.join(" AND ");
+  const fromJoin = `FROM scraper_products p JOIN scraper_sitemaps s ON s.id = p.sitemap_id`;
 
   const [{ rows: countRows }, { rows }] = await Promise.all([
-    db.query<{ count: string }>(`SELECT COUNT(*)::text AS count FROM scraper_products WHERE ${where}`, values),
+    db.query<{ count: string }>(`SELECT COUNT(*)::text AS count ${fromJoin} WHERE ${where}`, values),
     db.query<SavedProduct>(
-      `SELECT id, sitemap_id, source_url, title, image, shop, price, currency,
-              status, notes, click_count, created_at::text, updated_at::text
-       FROM scraper_products
+      `SELECT p.id, p.sitemap_id, p.source_url, p.title, p.image, p.shop, p.price, p.currency,
+              p.status, p.notes, p.click_count, p.created_at::text, p.updated_at::text
+       ${fromJoin}
        WHERE ${where}
-       ORDER BY updated_at DESC, id DESC
+       ORDER BY p.updated_at DESC, p.id DESC
        LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
       [...values, opts.limit, opts.offset],
     ),
@@ -496,6 +502,17 @@ export async function getBrandBySlug(slug: string): Promise<Brand | null> {
   return rows[0] ?? null;
 }
 
+export async function getBrandByUserAndSlug(userId: string, slug: string): Promise<Brand | null> {
+  await ensureScraperTables();
+  const { rows } = await db.query<Brand>(
+    `SELECT id, user_id, slug, name, description, logo_url, banner_url, website_url, twitter_url, instagram_url, categories,
+            created_at::text, updated_at::text
+     FROM brands WHERE user_id = $1 AND slug = $2`,
+    [userId, slug],
+  );
+  return rows[0] ?? null;
+}
+
 export async function upsertBrand(
   userId: string,
   input: Pick<Brand, "slug" | "name" | "description" | "logo_url" | "website_url">,
@@ -613,32 +630,38 @@ export type ClickAnalytics = {
   dailyClicks: DailyClicks[];
 };
 
-export async function getClickAnalytics(startDate: Date, endDate: Date): Promise<ClickAnalytics> {
+export async function getClickAnalytics(userId: string, brandId: number, startDate: Date, endDate: Date): Promise<ClickAnalytics> {
   await ensureScraperTables();
   const [{ rows: [summary] }, { rows: topProducts }, { rows: dailyRows }] = await Promise.all([
     db.query<{ total_clicks: string; total_products: string; active_products: string }>(`
       SELECT
-        COALESCE(SUM(click_count), 0)::text AS total_clicks,
-        COUNT(*)::text AS total_products,
-        COUNT(*) FILTER (WHERE status = 'active')::text AS active_products
-      FROM scraper_products
-    `),
+        COALESCE(SUM(p.click_count), 0)::text AS total_clicks,
+        COUNT(p.*)::text AS total_products,
+        COUNT(p.*) FILTER (WHERE p.status = 'active')::text AS active_products
+      FROM scraper_products p
+      JOIN scraper_sitemaps s ON s.id = p.sitemap_id
+      WHERE p.user_id = $1 AND s.brand_id = $2
+    `, [userId, brandId]),
     db.query<{ id: number; title: string; shop: string; source_url: string; click_count: number }>(`
-      SELECT id, title, shop, source_url, click_count
-      FROM scraper_products
-      WHERE click_count > 0
-      ORDER BY click_count DESC
+      SELECT p.id, p.title, p.shop, p.source_url, p.click_count
+      FROM scraper_products p
+      JOIN scraper_sitemaps s ON s.id = p.sitemap_id
+      WHERE p.user_id = $1 AND s.brand_id = $2 AND p.click_count > 0
+      ORDER BY p.click_count DESC
       LIMIT 10
-    `),
+    `, [userId, brandId]),
     db.query<{ date: string; clicks: string }>(`
       SELECT
-        DATE(clicked_at AT TIME ZONE 'UTC')::text AS date,
+        DATE(e.clicked_at AT TIME ZONE 'UTC')::text AS date,
         COUNT(*)::text AS clicks
-      FROM product_click_events
-      WHERE clicked_at >= $1 AND clicked_at < $2
-      GROUP BY DATE(clicked_at AT TIME ZONE 'UTC')
+      FROM product_click_events e
+      JOIN scraper_products p ON p.id = e.product_id
+      JOIN scraper_sitemaps s ON s.id = p.sitemap_id
+      WHERE p.user_id = $1 AND s.brand_id = $2
+        AND e.clicked_at >= $3 AND e.clicked_at < $4
+      GROUP BY DATE(e.clicked_at AT TIME ZONE 'UTC')
       ORDER BY date ASC
-    `, [startDate, endDate]),
+    `, [userId, brandId, startDate, endDate]),
   ]);
 
   return {
@@ -667,20 +690,22 @@ export type ProductIssuesSummary = {
   products: IssueProduct[];
 };
 
-export async function getProductIssuesSummary(userId: string): Promise<ProductIssuesSummary> {
+export async function getProductIssuesSummary(userId: string, brandId: number): Promise<ProductIssuesSummary> {
   await ensureScraperTables();
   const { rows } = await db.query<{
     id: number; title: string; shop: string; source_url: string;
     image: string | null; price: string | null;
   }>(
-    `SELECT id, title, shop, source_url, image, price
-     FROM scraper_products
-     WHERE user_id = $1
-       AND status != 'archived'
-       AND ${ISSUE_SQL}
-     ORDER BY updated_at DESC
+    `SELECT p.id, p.title, p.shop, p.source_url, p.image, p.price
+     FROM scraper_products p
+     JOIN scraper_sitemaps s ON s.id = p.sitemap_id
+     WHERE p.user_id = $1
+       AND s.brand_id = $2
+       AND p.status != 'archived'
+       AND ${ISSUE_SQL.replace(/\b(image|price)\b/g, "p.$1")}
+     ORDER BY p.updated_at DESC
      LIMIT 50`,
-    [userId],
+    [userId, brandId],
   );
 
   const products: IssueProduct[] = rows.map((r) => ({

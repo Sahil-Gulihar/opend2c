@@ -91,6 +91,7 @@ export default function OverviewPage() {
     setLoading(true);
     try {
       const params = new URLSearchParams({
+        brandSlug,
         start: start.toISOString(),
         end:   end.toISOString(),
       });
@@ -99,14 +100,14 @@ export default function OverviewPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [brandSlug]);
 
   // Initial load — last 30 days + issues + category nudge
   useEffect(() => {
     const end   = endOfDay(new Date());
     const start = startOfDay(subDays(new Date(), 29));
     fetchData(start, end);
-    fetch("/api/issues").then((r) => r.ok && r.json()).then((d) => d && setIssues(d));
+    fetch(`/api/issues?brandSlug=${brandSlug}`).then((r) => r.ok && r.json()).then((d) => d && setIssues(d));
 
     const dismissedKey = `category-nudge-dismissed-${brandSlug}`;
     if (!localStorage.getItem(dismissedKey)) {

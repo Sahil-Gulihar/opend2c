@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "@/lib/session";
 import {
   createSitemap,
+  getBrandByUserAndSlug,
   listSitemaps,
   markSitemapDone,
   markSitemapFailed,
@@ -10,11 +11,15 @@ import {
 } from "@/lib/scraper-store";
 import { scrapeProductsFromSitemap } from "@/lib/sitemap-scraper";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const session = await getServerSession();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const sitemaps = await listSitemaps(session.user.id);
+  const brandSlug = req.nextUrl.searchParams.get("brandSlug") ?? "";
+  const brand = brandSlug ? await getBrandByUserAndSlug(session.user.id, brandSlug) : null;
+  if (!brand) return NextResponse.json({ error: "Brand not found" }, { status: 404 });
+
+  const sitemaps = await listSitemaps(session.user.id, brand.id);
   return NextResponse.json(sitemaps);
 }
 
@@ -24,10 +29,14 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json().catch(() => null);
   const rawUrl = typeof body?.url === "string" ? body.url.trim() : "";
+  const brandSlug = typeof body?.brandSlug === "string" ? body.brandSlug : "";
 
   if (!rawUrl) {
     return NextResponse.json({ error: "Sitemap URL is required" }, { status: 400 });
   }
+
+  const brand = brandSlug ? await getBrandByUserAndSlug(session.user.id, brandSlug) : null;
+  if (!brand) return NextResponse.json({ error: "Brand not found" }, { status: 404 });
 
   let url: string;
   try {
@@ -36,7 +45,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Enter a valid sitemap URL" }, { status: 400 });
   }
 
-  const sitemapId = await createSitemap(session.user.id, url);
+  const sitemapId = await createSitemap(session.user.id, brand.id, url);
   const userId = session.user.id;
 
   // Fire-and-forget — scrape in background so SSE can stream progress

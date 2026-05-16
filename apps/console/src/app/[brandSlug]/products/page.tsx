@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 
 type ProductStatus = "draft" | "active" | "archived";
 type FilterValue   = ProductStatus | "all";
@@ -207,6 +207,7 @@ export default function ProductsPage() {
 }
 
 function ProductsPageInner() {
+  const { brandSlug } = useParams<{ brandSlug: string }>();
   const [products, setProducts]       = useState<Product[]>([]);
   const [total, setTotal]             = useState(0);
   const [hasMore, setHasMore]         = useState(false);
@@ -249,7 +250,7 @@ function ProductsPageInner() {
     const withImages: { id: number; image: string }[] = [];
     let off = 0;
     while (true) {
-      const res = await fetch(`/api/scraper/products?limit=100&offset=${off}&status=all`, { cache: "no-store" });
+      const res = await fetch(`/api/scraper/products?brandSlug=${brandSlug}&limit=100&offset=${off}&status=all`, { cache: "no-store" });
       if (!res.ok) break;
       const data: { products: Product[]; hasMore: boolean } = await res.json();
       for (const p of data.products) {
@@ -278,6 +279,7 @@ function ProductsPageInner() {
     off: number, q: string, f: FilterValue, issues: boolean, append: boolean,
   ) => {
     const params = new URLSearchParams({
+      brandSlug,
       limit:  String(PAGE),
       offset: String(off),
       status: issues ? "all" : f,
@@ -336,7 +338,7 @@ function ProductsPageInner() {
     const allIds: number[] = [];
     let off = 0;
     while (true) {
-      const params = new URLSearchParams({ limit: "100", offset: String(off), status: "all", has_issues: "1" });
+      const params = new URLSearchParams({ brandSlug, limit: "100", offset: String(off), status: "all", has_issues: "1" });
       const res = await fetch(`/api/scraper/products?${params}`, { cache: "no-store" });
       if (!res.ok) break;
       const data: { products: Product[]; hasMore: boolean } = await res.json();

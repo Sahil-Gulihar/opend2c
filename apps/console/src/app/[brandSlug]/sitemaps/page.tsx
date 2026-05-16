@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useParams } from "next/navigation";
 
 type Sitemap = {
   id: number;
@@ -30,6 +31,7 @@ const STATUS_CONFIG: Record<Sitemap["status"], { label: string; className: strin
 };
 
 export default function SitemapsPage() {
+  const { brandSlug } = useParams<{ brandSlug: string }>();
   const [url, setUrl]           = useState("");
   const [sitemaps, setSitemaps] = useState<Sitemap[]>([]);
   const [loading, setLoading]   = useState(true);
@@ -41,7 +43,7 @@ export default function SitemapsPage() {
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   async function load() {
-    const res = await fetch("/api/scraper/sitemaps", { cache: "no-store" });
+    const res = await fetch(`/api/scraper/sitemaps?brandSlug=${brandSlug}`, { cache: "no-store" });
     if (res.ok) setSitemaps(await res.json());
     setLoading(false);
   }
@@ -106,7 +108,7 @@ export default function SitemapsPage() {
     const res = await fetch("/api/scraper/sitemaps", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: trimmed }),
+      body: JSON.stringify({ url: trimmed, brandSlug }),
     });
 
     setSaving(false);

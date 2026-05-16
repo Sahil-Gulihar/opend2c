@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "@/lib/session";
-import { bulkUpdateProducts, deleteProducts, listProducts, updateProduct } from "@/lib/scraper-store";
+import { bulkUpdateProducts, deleteProducts, getBrandByUserAndSlug, listProducts, updateProduct } from "@/lib/scraper-store";
 
 const STATUSES = new Set(["draft", "active", "archived"]);
 
@@ -9,13 +9,17 @@ export async function GET(req: NextRequest) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const p          = req.nextUrl.searchParams;
+  const brandSlug  = p.get("brandSlug") ?? "";
   const limit      = Math.min(Math.max(Number(p.get("limit"))  || 10, 1), 100);
   const offset     = Math.max(Number(p.get("offset")) || 0, 0);
   const status     = p.get("status") ?? "all";
   const q          = p.get("q")?.trim() ?? "";
   const hasIssues  = p.get("has_issues") === "1";
 
-  const result = await listProducts(session.user.id, { limit, offset, status, q, hasIssues });
+  const brand = brandSlug ? await getBrandByUserAndSlug(session.user.id, brandSlug) : null;
+  if (!brand) return NextResponse.json({ error: "Brand not found" }, { status: 404 });
+
+  const result = await listProducts(session.user.id, { brandId: brand.id, limit, offset, status, q, hasIssues });
   return NextResponse.json({ ...result, hasMore: offset + limit < result.total });
 }
 
