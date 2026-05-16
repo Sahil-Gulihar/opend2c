@@ -183,6 +183,17 @@ export async function ensureScraperTables() {
     CREATE INDEX IF NOT EXISTS idx_click_events_clicked_at ON product_click_events(clicked_at);
   `).catch(() => {});
 
+  // Backfill brand_id on sitemaps that predate the brand_id column.
+  // Assigns each orphaned sitemap to the earliest brand owned by the same user.
+  await db.query(`
+    UPDATE scraper_sitemaps ss
+    SET brand_id = (
+      SELECT id FROM brands WHERE user_id = ss.user_id ORDER BY created_at ASC LIMIT 1
+    )
+    WHERE ss.brand_id IS NULL
+      AND EXISTS (SELECT 1 FROM brands WHERE user_id = ss.user_id)
+  `).catch(() => {});
+
   initialized = true;
 }
 
