@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
   const sitemapId = await createSitemap(session.user.id, brand.id, url);
   const userId = session.user.id;
 
-  const crawlerWorkerURL = process.env.CRAWLER_WORKER_URL?.replace(/\/$/, "");
+  const crawlerWorkerURL = process.env.WORKER_URL?.replace(/\/$/, "");
   const workerSecret = process.env.WORKER_SECRET ?? "";
 
   if (crawlerWorkerURL && workerSecret) {
